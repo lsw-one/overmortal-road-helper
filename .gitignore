@@ -218,3 +218,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---------- Project specific ----------
+OuterRoadHelper_v1.0/
+!OuterRoadHelper.spec
