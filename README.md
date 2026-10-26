@@ -45,7 +45,7 @@
 ## 🛠️ 快速开始（普通用户）
 
 ### 1. 下载软件
-请前往本仓库的 [Releases](https://github.com/lsw-one/overmortal-road-helper/releases) 页面，下载最新版本的 `OuterRoadHelper.zip` 压缩包。
+请前往本仓库的 [Releases](https://github.com/lsw-one/overmortal-road-helper/releases) 页面，下载最新版本的 `OuterRoadHelper.zip` 或`OuterRoadHelper.7z`压缩包。
 
 ### 2. 解压与运行
 - 将压缩包解压到**纯英文路径**下（例如 `D:\GameBot`，**切勿放在中文或带空格的路径下**）。
