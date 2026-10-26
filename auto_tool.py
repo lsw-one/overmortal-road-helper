@@ -14,7 +14,7 @@ import webbrowser
 # ================= 配置区域 =================
 IMAGE_CONFIDENCE = 0.65       
 LOOP_DELAY = 0.1              
-IMG_DIR = "images"            
+IMG_DIR = "assets/images"
 BASE_WIDTH = 1660
 BASE_HEIGHT = 2560
 CONFIG_FILE = "config.json"
@@ -41,7 +41,7 @@ if getattr(sys, 'frozen', False):
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-ADB_PATH = os.path.join(BASE_DIR, "adb.exe")
+ADB_PATH = os.path.join(BASE_DIR, "adb", "adb.exe")
 CONFIG_PATH = os.path.join(BASE_DIR, CONFIG_FILE)
 
 def get_img_path(filename):
@@ -173,7 +173,7 @@ class GameAutomationApp:
         
         # 【新增】加载窗口图标
         try:
-            icon_path = os.path.join(BASE_DIR, "icon.ico")
+            icon_path = os.path.join(BASE_DIR, "assets", "icon.ico")
             if os.path.exists(icon_path):
                 self.root.iconbitmap(icon_path)
         except Exception as e:

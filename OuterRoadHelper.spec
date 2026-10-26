@@ -5,7 +5,7 @@ a = Analysis(
     ['auto_tool.py'],
     pathex=[],
     binaries=[],
-    datas=[('images', 'images'), ('icon.ico', '.'), ('adb.exe', '.'), ('AdbWinApi.dll', '.'), ('AdbWinUsbApi.dll', '.')],
+    datas=[('assets/images', 'assets/images'), ('assets/icon.ico', 'assets'), ('adb', 'adb')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

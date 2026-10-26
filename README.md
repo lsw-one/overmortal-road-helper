@@ -35,9 +35,9 @@
 ## 📸 软件截图
 
 <p align="center">
-  <img src="screenshots/main.png" alt="主界面" width="45%" />
+  <img src="assets/screenshots/main.png" alt="主界面" width="45%" />
   &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="screenshots/setting.png" alt="设置界面" width="45%" />
+  <img src="assets/screenshots/setting.png" alt="设置界面" width="45%" />
 </p>
 
 ---
