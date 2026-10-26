@@ -38,11 +38,13 @@ DAILY_CHECKBOX_OFFSET_X = 57
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = sys._MEIPASS
+    APP_DIR = os.path.dirname(sys.executable)
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    APP_DIR = BASE_DIR
 
 ADB_PATH = os.path.join(BASE_DIR, "adb", "adb.exe")
-CONFIG_PATH = os.path.join(BASE_DIR, CONFIG_FILE)
+CONFIG_PATH = os.path.join(APP_DIR, CONFIG_FILE)
 
 def get_img_path(filename):
     return os.path.join(BASE_DIR, IMG_DIR, filename)
