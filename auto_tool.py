@@ -42,7 +42,7 @@ else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     APP_DIR = BASE_DIR
 
-# 【修改】自适应 ADB 路径并返回其所在的目录作为工作目录
+# 自适应 ADB 路径并返回其所在的目录作为工作目录
 if os.path.exists(os.path.join(BASE_DIR, "adb", "adb.exe")):
     ADB_PATH = os.path.join(BASE_DIR, "adb", "adb.exe")
     ADB_CWD = os.path.join(BASE_DIR, "adb")
@@ -53,7 +53,7 @@ else:
     ADB_PATH = os.path.join(BASE_DIR, "adb", "adb.exe") # 兜底
     ADB_CWD = BASE_DIR
 
-# 【修改】自适应图片路径
+# 自适应图片路径
 if os.path.exists(os.path.join(BASE_DIR, "assets", "images")):
     IMG_DIR = os.path.join(BASE_DIR, "assets", "images")
 else:
@@ -357,7 +357,6 @@ class GameAutomationApp:
         time.sleep(2.5)
 
     def handle_daily_popup(self, screen, curr_w, curr_h):
-        # 【修改】状态栏文字改为“处理弹窗”
         self.update_status("处理弹窗", "#008080")
         
         loc, val, rect = self.find_image_match(screen, 'icon_daily_no_prompt.png')
@@ -380,7 +379,6 @@ class GameAutomationApp:
                 self.add_log("点击 [继续] 关闭弹窗")
             else:
                 self.add_log("未识别到底部按钮，盲点指定位置关闭", "orange")
-                # 【修改】盲点坐标改为 (1250, 1610) 并适配等比例计算
                 fallback_x = int(1250 * (curr_w / BASE_WIDTH))
                 fallback_y = int(1610 * (curr_h / BASE_HEIGHT))
                 self.adb_click(fallback_x, fallback_y)
@@ -412,13 +410,20 @@ class GameAutomationApp:
                 self.adb_click(opt_x, opt_y)
                 time.sleep(0.5)
                 screen_confirm = self.adb_screenshot()
+                
+                # 【修改点】点击“选择残纹”后，弹出奖励弹窗，盲点 (805, 1870) 关闭
                 if self.find_and_click(screen_confirm, 'btn_select_residue.png'):
                     self.add_log(f"选中 [{SIMING_NAMES.get(opt_num, str(opt_num))}] 并点击确定")
-                    time.sleep(1)
-                    self.adb_click(int(SIMING_CLOSE_POS[0] * (curr_w / BASE_WIDTH)), int(SIMING_CLOSE_POS[1] * (curr_h / BASE_HEIGHT)))
-                    time.sleep(1.5)
+                    time.sleep(1.5) # 等待奖励弹窗出现
+                    
+                    close_x = int(805 * (curr_w / BASE_WIDTH))
+                    close_y = int(1870 * (curr_h / BASE_HEIGHT))
+                    self.adb_click(close_x, close_y)
+                    
+                    time.sleep(1.5) # 等待弹窗关闭
                     break 
 
+        # 最后点击返回按钮
         screen_back = self.adb_screenshot()
         if screen_back is not None and self.find_and_click(screen_back, 'btn_back.png'):
             if has_selected: self.add_log("点击返回，退出司命界面")
