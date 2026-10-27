@@ -14,7 +14,6 @@ import webbrowser
 # ================= 配置区域 =================
 IMAGE_CONFIDENCE = 0.65       
 LOOP_DELAY = 0.1              
-IMG_DIR = "assets/images"
 BASE_WIDTH = 1660
 BASE_HEIGHT = 2560
 CONFIG_FILE = "config.json"
@@ -43,11 +42,27 @@ else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     APP_DIR = BASE_DIR
 
-ADB_PATH = os.path.join(BASE_DIR, "adb", "adb.exe")
+# 【修改】自适应 ADB 路径并返回其所在的目录作为工作目录
+if os.path.exists(os.path.join(BASE_DIR, "adb", "adb.exe")):
+    ADB_PATH = os.path.join(BASE_DIR, "adb", "adb.exe")
+    ADB_CWD = os.path.join(BASE_DIR, "adb")
+elif os.path.exists(os.path.join(BASE_DIR, "adb.exe")):
+    ADB_PATH = os.path.join(BASE_DIR, "adb.exe")
+    ADB_CWD = BASE_DIR
+else:
+    ADB_PATH = os.path.join(BASE_DIR, "adb", "adb.exe") # 兜底
+    ADB_CWD = BASE_DIR
+
+# 【修改】自适应图片路径
+if os.path.exists(os.path.join(BASE_DIR, "assets", "images")):
+    IMG_DIR = os.path.join(BASE_DIR, "assets", "images")
+else:
+    IMG_DIR = os.path.join(BASE_DIR, "images")
+
 CONFIG_PATH = os.path.join(APP_DIR, CONFIG_FILE)
 
 def get_img_path(filename):
-    return os.path.join(BASE_DIR, IMG_DIR, filename)
+    return os.path.join(IMG_DIR, filename)
 
 # ================= 设置窗口类 =================
 class SettingsWindow(tk.Toplevel):
@@ -169,13 +184,14 @@ class SettingsWindow(tk.Toplevel):
 class GameAutomationApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("一念逍遥·域外古路助手 v1.0") # 【修改点】版本号改为 v1.0
+        self.root.title("一念逍遥·域外古路助手 v1.1") 
         self.root.geometry("520x600") 
         self.root.configure(padx=10, pady=10) 
         
-        # 【新增】加载窗口图标
         try:
             icon_path = os.path.join(BASE_DIR, "assets", "icon.ico")
+            if not os.path.exists(icon_path):
+                icon_path = os.path.join(BASE_DIR, "icon.ico")
             if os.path.exists(icon_path):
                 self.root.iconbitmap(icon_path)
         except Exception as e:
@@ -220,8 +236,23 @@ class GameAutomationApp:
         tk.Label(root, text="操作日志", font=("微软雅黑", 10, "bold"), anchor="w").pack(fill="x", padx=20, pady=(10, 0))
         self.log_text = scrolledtext.ScrolledText(root, height=18, font=("Consolas", 9), state=tk.DISABLED, bg="#1e1e1e", fg="#d4d4d4")
         self.log_text.pack(fill=tk.BOTH, expand=True, padx=20, pady=(5, 10))
+
+        # 软件启动时进行路径体检
+        self.root.after(500, self.check_files)
     
-    # （后面的所有逻辑代码保持原样，不需要变动）
+    def check_files(self):
+        """启动时检查必要文件是否存在"""
+        if not os.path.exists(ADB_PATH):
+            self.add_log(f"❌ 严重错误：找不到 adb.exe！\n请检查路径: {ADB_PATH}")
+        else:
+            self.add_log(f"✅ ADB 工具就绪 ({ADB_CWD})")
+            
+        test_img = get_img_path('btn_challenge.png')
+        if not os.path.exists(test_img):
+            self.add_log(f"❌ 严重错误：找不到图片！\n请检查图片文件夹: {IMG_DIR}")
+        else:
+            self.add_log(f"✅ 图片资源就绪 ({IMG_DIR})")
+
     def load_config(self):
         if os.path.exists(CONFIG_PATH):
             try:
@@ -269,11 +300,12 @@ class GameAutomationApp:
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         try:
-            result = subprocess.run(cmd, shell=True, capture_output=True, startupinfo=startupinfo, cwd=BASE_DIR, timeout=2)
+            result = subprocess.run(cmd, shell=True, capture_output=True, startupinfo=startupinfo, cwd=ADB_CWD, timeout=3)
             if result.returncode != 0 or not result.stdout: return None
             img_bytes = np.frombuffer(result.stdout, np.uint8)
             return cv2.imdecode(img_bytes, cv2.IMREAD_COLOR)
-        except Exception:
+        except Exception as e:
+            print(f"截图异常: {e}")
             return None
 
     def adb_click(self, x, y):
@@ -287,7 +319,7 @@ class GameAutomationApp:
         cmd = f'"{ADB_PATH}" -s {current_port} shell input tap {x} {y}'
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo, cwd=BASE_DIR)
+        subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo, cwd=ADB_CWD)
 
     def find_image_match(self, screen_img, img_name, use_gray=False):
         full_path = get_img_path(img_name)
@@ -325,19 +357,34 @@ class GameAutomationApp:
         time.sleep(2.5)
 
     def handle_daily_popup(self, screen, curr_w, curr_h):
-        self.update_status("处理每日弹窗", "#008080")
+        # 【修改】状态栏文字改为“处理弹窗”
+        self.update_status("处理弹窗", "#008080")
+        
         loc, val, rect = self.find_image_match(screen, 'icon_daily_no_prompt.png')
         if rect is None: return
+        
         text_left_x, text_top_y, text_w, text_h = rect
         scale_x = curr_w / BASE_WIDTH
         circle_x = text_left_x - int(DAILY_CHECKBOX_OFFSET_X * scale_x)
         circle_y = text_top_y + (text_h // 2)
+        
         self.add_log("勾选 [今日不再提示]")
         self.adb_click(circle_x, circle_y)
-        time.sleep(0.6) 
+        time.sleep(0.8) 
+        
         screen = self.adb_screenshot() 
-        if screen is not None and self.find_and_click(screen, 'btn_popup_confirm.png'):
-            self.add_log("点击 [确认] 关闭每日弹窗")
+        if screen is not None:
+            if self.find_and_click(screen, 'btn_popup_confirm.png'):
+                self.add_log("点击 [确认] 关闭弹窗")
+            elif self.find_and_click(screen, 'btn_popup_continue.png'):
+                self.add_log("点击 [继续] 关闭弹窗")
+            else:
+                self.add_log("未识别到底部按钮，盲点指定位置关闭", "orange")
+                # 【修改】盲点坐标改为 (1250, 1610) 并适配等比例计算
+                fallback_x = int(1250 * (curr_w / BASE_WIDTH))
+                fallback_y = int(1610 * (curr_h / BASE_HEIGHT))
+                self.adb_click(fallback_x, fallback_y)
+            
             time.sleep(1.5) 
 
     def handle_siming(self, screen, curr_w, curr_h, loc):
@@ -381,7 +428,7 @@ class GameAutomationApp:
     def automation_loop(self):
         current_port = f"127.0.0.1:{self.adb_port}"
         self.add_log(f"后台线程已启动，正在连接 ADB: {current_port} ...")
-        subprocess.run(f'"{ADB_PATH}" connect {current_port}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=subprocess.STARTUPINFO(), cwd=BASE_DIR)
+        subprocess.run(f'"{ADB_PATH}" connect {current_port}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=subprocess.STARTUPINFO(), cwd=ADB_CWD)
         
         while self.is_running:
             if not self.is_running: break
@@ -402,7 +449,9 @@ class GameAutomationApp:
 
             if self.find_and_click(screen, 'icon_no_reward.png'):
                 self.update_status("关闭 [无奖励] 弹窗", "red")
-                self.adb_click(curr_w // 2, curr_h // 2)
+                close_x = int(804 * (curr_w / BASE_WIDTH))
+                close_y = int(1980 * (curr_h / BASE_HEIGHT))
+                self.adb_click(close_x, close_y)
                 self.force_challenge_next = True; time.sleep(1); continue
 
             if self.click_image_claim(screen, curr_w, curr_h):
