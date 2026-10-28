@@ -23,10 +23,20 @@
   - 支持 **9 种属性自定义优先级**（支持 UI 可视化和直接输入）。
   - 自动识别“已选完”状态，智能跳过并选择下一个优先属性。
   - 选完后自动返回。
+- 🌳 **道宝自动升级**：
+  - 识别主界面右上角红点入口，优先进入“造化道果”，其次“盘古神木”。
+  - 自动点击带绿箭头的【滋养】；灰色滋养代表资源不足，自动退出不误操作。
+  - 自动处理升阶确认与“造化灵液”弹窗，避免连点卡死。
 - 🎯 **全能弹窗清理**：
   - 自动识别并点击“领取奖励”。
   - 自动处理“无奖励”翻车弹窗。
   - 自动勾选每日弹窗的“今日不再提示”并确认。
+- 🌗 **深/浅色主题**：主界面一键切换，带淡入淡出过渡动画。
+- ⏯️ **暂停 / 继续**：挂机过程中可随时暂停检查，恢复后继续执行。
+- ⚡ **性能优化**：
+  - 启动时将全部模板图片载入内存，避免反复读盘。
+  - 分层状态机 + 失败/弹窗后的“极速追踪”通道，减少无效全屏扫描。
+  - 可打断休眠，点击“停止运行”立即响应。
 - 📐 **多分辨率自适应**：所有坐标与点击位置均按1660:2560等比例缩放，更换不同等比例分辨率的模拟器也能自动适配（需重新校准一次图片）。
 - 💾 **配置记忆功能**：自动保存用户的 ADB 端口、优先级设置到 `config.json`，无需每次重新配置。
 
@@ -60,9 +70,25 @@
 如果你希望自己修改源码并重新打包成 EXE，请参考以下步骤：
 
 ### 1. 环境准备
-推荐使用 Anaconda 创建一个干净的 Python 3.10 虚拟环境：
+推荐使用 Anaconda 创建一个干净的 Python 3.10 环境：
 ```bash
 conda create -n game_tool python=3.10 -y
 conda activate game_tool
-pip install opencv-python numpy pillow pygetwindow pyautogui pyinstaller psutil pywin32
+pip install -r requirements.txt
 ```
+
+### 2. 运行源码
+```bash
+python auto_tool.py
+```
+
+### 3. 打包 EXE
+```bash
+pyinstaller OuterRoadHelper.spec --noconfirm --clean
+```
+- 产物为 onedir 布局，输出到 `dist/OuterRoadHelper/`，`OuterRoadHelper.exe` 必须与 `_internal` 目录一起分发。
+- `OuterRoadHelper.spec` 已自动收集 conda 环境的 `Library\bin` 下的 Tcl/Tk、libffi 等运行库，并关闭了 UPX 压缩，避免 DLL 被压缩损坏。
+- 若修改了代码但依赖未变，可去掉 `--clean` 加快增量打包；依赖有变化时务必加 `--clean`。
+
+### 4. 素材目录
+所有模板图片位于 `assets/images/`，按 `common` / `battle` / `buff` / `siming` / `daobao` 分类存放。代码支持**全目录递归查找**，新增素材只需放入对应文件夹并按原文件名命名，无需修改代码。素材命名规范与匹配细节见 [说明.md](说明.md)。

@@ -1,0 +1,11 @@
+# 运行依赖（conda 环境 game_tool，Python 3.10）
+customtkinter==6.0.0
+darkdetect==0.8.0
+packaging==26.3
+Pillow==9.5.0
+numpy==1.26.4
+opencv-python==4.10.0.84
+
+# 打包依赖
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.9

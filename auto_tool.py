@@ -1,6 +1,6 @@
 import tkinter as tk
 import tkinter.messagebox
-from tkinter import scrolledtext
+import customtkinter as ctk
 import subprocess
 import cv2
 import numpy as np
@@ -10,10 +10,11 @@ import os
 import sys
 import json
 import webbrowser
+import ctypes # 【新增】用于处理高分辨率缩放
 
 # ================= 配置区域 =================
 IMAGE_CONFIDENCE = 0.65       
-LOOP_DELAY = 0.1              
+LOOP_DELAY = 0.05            
 BASE_WIDTH = 1660
 BASE_HEIGHT = 2560
 CONFIG_FILE = "config.json"
@@ -42,7 +43,10 @@ else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     APP_DIR = BASE_DIR
 
-# 自适应 ADB 路径并返回其所在的目录作为工作目录
+ICON_PATH = os.path.join(BASE_DIR, "assets", "icon.ico")
+if not os.path.exists(ICON_PATH):
+    ICON_PATH = os.path.join(BASE_DIR, "icon.ico")
+
 if os.path.exists(os.path.join(BASE_DIR, "adb", "adb.exe")):
     ADB_PATH = os.path.join(BASE_DIR, "adb", "adb.exe")
     ADB_CWD = os.path.join(BASE_DIR, "adb")
@@ -50,10 +54,9 @@ elif os.path.exists(os.path.join(BASE_DIR, "adb.exe")):
     ADB_PATH = os.path.join(BASE_DIR, "adb.exe")
     ADB_CWD = BASE_DIR
 else:
-    ADB_PATH = os.path.join(BASE_DIR, "adb", "adb.exe") # 兜底
+    ADB_PATH = os.path.join(BASE_DIR, "adb", "adb.exe") 
     ADB_CWD = BASE_DIR
 
-# 自适应图片路径
 if os.path.exists(os.path.join(BASE_DIR, "assets", "images")):
     IMG_DIR = os.path.join(BASE_DIR, "assets", "images")
 else:
@@ -61,44 +64,269 @@ else:
 
 CONFIG_PATH = os.path.join(APP_DIR, CONFIG_FILE)
 
-def get_img_path(filename):
-    return os.path.join(IMG_DIR, filename)
+FONT_FAMILY = "Microsoft YaHei UI" 
+LOG_FONT = "Cascadia Code" if os.name == 'nt' else "Consolas"
 
-# ================= 设置窗口类 =================
-class SettingsWindow(tk.Toplevel):
+# ================= 主题色定义：(light, dark) 元组 =================
+THEME_BG      = ("#ebebeb", "#242424")
+THEME_FRAME   = ("#dbdbdb", "#2b2b2b")
+THEME_ROW     = ("#ffffff", "#2f2f2f")
+THEME_TEXT    = ("#1a1a1a", "#dce4ee")
+THEME_ENTRY   = ("#f9f9fa", "#343638")
+THEME_BORDER  = ("#979da2", "#565b5e")
+THEME_LOG_BG  = ("#ffffff", "#1e1e1e")
+THEME_LOG_TX  = ("#333333", "#d4d4d4")
+
+def get_img_path(filename):
+    direct_path = os.path.join(IMG_DIR, filename)
+    if os.path.exists(direct_path):
+        return direct_path
+    base_name = os.path.basename(filename)
+    for root, dirs, files in os.walk(IMG_DIR):
+        if base_name in files:
+            return os.path.join(root, base_name)
+    return direct_path
+
+# ================= 颜色工具 =================
+def _hex_to_rgb(h):
+    h = h.lstrip('#')
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+def _rgb_to_hex(r, g, b):
+    return f"#{int(round(r)):02x}{int(round(g)):02x}{int(round(b)):02x}"
+
+def _lerp_color(c1, c2, t):
+    r1, g1, b1 = _hex_to_rgb(c1)
+    r2, g2, b2 = _hex_to_rgb(c2)
+    return _rgb_to_hex(r1 + (r2 - r1) * t,
+                       g1 + (g2 - g1) * t,
+                       b1 + (b2 - b1) * t)
+
+# ================= 深色标题栏工具 =================
+def apply_titlebar(window, dark=True):
+    if os.name != 'nt':
+        return
+    try:
+        window.update_idletasks()
+        hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
+        if not hwnd:
+            hwnd = window.winfo_id()
+        value = ctypes.c_int(1 if dark else 0)
+        for attr in (20, 19):
+            try:
+                res = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, attr, ctypes.byref(value), ctypes.sizeof(value)
+                )
+                if res == 0:
+                    break
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+# ================= 遮罩式主题切换器 =================
+class ThemeSwitcher:
+    def __init__(self, app):
+        self.app = app
+        self.root = app.root
+        self.active = False
+
+    def switch(self, to_dark, fade_in_ms=120, color_ms=260, fade_out_ms=140):
+        if self.active:
+            return
+        self.active = True
+
+        if to_dark:
+            from_bg, to_bg = THEME_BG[0], THEME_BG[1]
+        else:
+            from_bg, to_bg = THEME_BG[1], THEME_BG[0]
+
+        overlay = tk.Toplevel(self.root)
+        overlay.withdraw()
+        overlay.overrideredirect(True)
+        try:
+            overlay.attributes("-topmost", True)
+        except Exception:
+            pass
+
+        self.root.update_idletasks()
+        x = self.root.winfo_rootx()
+        y = self.root.winfo_rooty()
+        w = self.root.winfo_width()
+        h = self.root.winfo_height()
+
+        overlay.geometry(self._geom(w, h, x, y))
+        overlay.configure(bg=from_bg)
+
+        has_alpha = False
+        try:
+            overlay.attributes("-alpha", 0.0)
+            has_alpha = True
+        except Exception:
+            pass
+
+        overlay.deiconify()
+        try:
+            overlay.update_idletasks()
+        except Exception:
+            pass
+
+        if has_alpha:
+            self._fade_in(overlay, 0, max(1, fade_in_ms // 15),
+                          to_dark, from_bg, to_bg, color_ms, fade_out_ms)
+        else:
+            self._do_switch(overlay, False, to_dark, from_bg, to_bg,
+                            color_ms, fade_out_ms)
+
+    @staticmethod
+    def _geom(w, h, x, y):
+        xs = f"{x:+d}" if x != 0 else "+0"
+        ys = f"{y:+d}" if y != 0 else "+0"
+        return f"{w}x{h}{xs}{ys}"
+
+    def _fade_in(self, overlay, i, total, to_dark, from_bg, to_bg,
+                 color_ms, fade_out_ms):
+        if i > total:
+            try:
+                overlay.attributes("-alpha", 1.0)
+            except Exception:
+                pass
+            self._do_switch(overlay, True, to_dark, from_bg, to_bg,
+                            color_ms, fade_out_ms)
+            return
+        try:
+            overlay.attributes("-alpha", i / total)
+        except Exception:
+            pass
+        self.root.after(15, self._fade_in, overlay, i + 1, total,
+                        to_dark, from_bg, to_bg, color_ms, fade_out_ms)
+
+    def _do_switch(self, overlay, has_alpha, to_dark, from_bg, to_bg,
+                   color_ms, fade_out_ms):
+        ctk.set_appearance_mode("dark" if to_dark else "light")
+        try:
+            self.root.update_idletasks()
+            self.root.update()
+        except Exception:
+            pass
+
+        frames = max(5, color_ms // 15)
+        def step_color(i):
+            if i >= frames:
+                self._fade_out(overlay, has_alpha, to_bg, fade_out_ms)
+                return
+            t = i / frames
+            try:
+                overlay.configure(bg=_lerp_color(from_bg, to_bg, t))
+            except Exception:
+                pass
+            self.root.after(15, step_color, i + 1)
+        step_color(0)
+
+    def _fade_out(self, overlay, has_alpha, to_bg, fade_out_ms):
+        if not has_alpha:
+            self._finish(overlay)
+            return
+        total = max(1, fade_out_ms // 15)
+        def step(i):
+            if i > total:
+                self._finish(overlay)
+                return
+            try:
+                overlay.attributes("-alpha", 1.0 - i / total)
+            except Exception:
+                pass
+            self.root.after(15, step, i + 1)
+        step(0)
+
+    def _finish(self, overlay):
+        try:
+            overlay.destroy()
+        except Exception:
+            pass
+        self.active = False
+        is_dark = ctk.get_appearance_mode() == "Dark"
+        apply_titlebar(self.root, is_dark)
+        for child in self.root.winfo_children():
+            if isinstance(child, SettingsWindow):
+                try:
+                    apply_titlebar(child, is_dark)
+                except Exception:
+                    pass
+
+# ================= 设置窗口类（整行平滑滑动版） =================
+class SettingsWindow(ctk.CTkToplevel):
+    CARD_H = 40
+    ROW_GAP = 12
+    COL_GAP = 10
+    ANIM_FRAMES = 12
+    ANIM_INTERVAL = 16
+
     def __init__(self, master, main_app):
         super().__init__(master)
         self.main_app = main_app
+        self.card_widgets = {}
+        self.animating = False
+        self._last_container_size = None
+
         self.title("域外古路助手 - 设置")
-        self.geometry("520x760") 
-        self.resizable(False, False)
-        self.transient(master) 
-        self.grab_set()        
 
-        dev_frame = tk.LabelFrame(self, text=" 模拟器连接设置 ", font=("微软雅黑", 10, "bold"))
+        w, h = 560, 740
+        self.geometry(f"{w}x{h}+-9999+-9999")
+
+        if os.path.exists(ICON_PATH):
+            self.iconbitmap(ICON_PATH)
+
+        self.configure(fg_color=THEME_BG)
+
+        # --- ADB 端口 ---
+        dev_frame = ctk.CTkFrame(self, fg_color=THEME_FRAME)
         dev_frame.pack(fill="x", padx=20, pady=10)
-        
-        tk.Label(dev_frame, text="ADB 端口:", font=("微软雅黑", 10)).grid(row=0, column=0, padx=5, pady=5)
-        self.port_entry = tk.Entry(dev_frame, width=10, font=("微软雅黑", 10), justify="center")
+
+        ctk.CTkLabel(dev_frame, text="ADB 端口:", font=(FONT_FAMILY, 14),
+                     text_color=THEME_TEXT).grid(row=0, column=0, padx=10, pady=10)
+
+        self.port_entry = ctk.CTkEntry(dev_frame, width=100, font=(FONT_FAMILY, 14),
+                                       justify="center",
+                                       fg_color=THEME_ENTRY,
+                                       border_color=THEME_BORDER,
+                                       text_color=THEME_TEXT)
         self.port_entry.insert(0, main_app.adb_port)
-        self.port_entry.grid(row=0, column=1, padx=5)
-        tk.Label(dev_frame, text="(MuMu 通常为 16384 或 16416)", fg="gray", font=("微软雅黑", 8)).grid(row=0, column=2, padx=5)
+        self.port_entry.grid(row=0, column=1, padx=10)
 
-        tk.Label(self, text="【司命道碑】优先级设置", font=("微软雅黑", 11, "bold")).pack(pady=(10, 0))
-        input_frame = tk.Frame(self)
+        ctk.CTkLabel(dev_frame, text="(MuMu通常为 16384 或 16416)", text_color="gray",
+                     font=(FONT_FAMILY, 12)).grid(row=0, column=2, padx=(0, 10))
+
+        # --- 优先级标题 ---
+        ctk.CTkLabel(self, text="【司命道碑】优先级设置",
+                     font=(FONT_FAMILY, 16, "bold"),
+                     text_color=THEME_TEXT).pack(pady=(5, 5))
+
+        input_frame = ctk.CTkFrame(self, fg_color="transparent")
         input_frame.pack(pady=5)
-        
-        self.entry_var = tk.StringVar(value=",".join(str(x) for x in main_app.current_priority))
-        self.priority_entry = tk.Entry(input_frame, textvariable=self.entry_var, width=30, justify="center", font=("微软雅黑", 11), bg="#f0f0f0")
-        self.priority_entry.pack(side=tk.LEFT, padx=5)
-        
-        sync_btn = tk.Button(input_frame, text="应用输入", command=self.sync_from_entry, bg="#e0e0e0", font=("微软雅黑", 9))
-        sync_btn.pack(side=tk.LEFT, padx=5)
 
-        help_frame = tk.Frame(self, bg="#f9f9f9", bd=1, relief="solid")
+        self.entry_var = tk.StringVar(value=",".join(str(x) for x in main_app.current_priority))
+        self.priority_entry = ctk.CTkEntry(input_frame, textvariable=self.entry_var,
+                                           width=250, justify="center",
+                                           font=(FONT_FAMILY, 14),
+                                           fg_color=THEME_ENTRY,
+                                           border_color=THEME_BORDER,
+                                           text_color=THEME_TEXT)
+        self.priority_entry.pack(side="left", padx=10)
+
+        ctk.CTkButton(input_frame, text="应用输入", width=80,
+                      font=(FONT_FAMILY, 13),
+                      command=self.sync_from_entry).pack(side="left")
+
+        # --- 属性参照表 ---
+        help_frame = ctk.CTkFrame(self, fg_color=THEME_FRAME)
         help_frame.pack(pady=5, fill="x", padx=20)
-        tk.Label(help_frame, text="属性编号参照", bg="#f9f9f9", fg="#333333", font=("微软雅黑", 9, "bold")).pack(pady=2)
-        grid_frame = tk.Frame(help_frame, bg="#f9f9f9")
+
+        ctk.CTkLabel(help_frame, text="属性编号参照",
+                     font=(FONT_FAMILY, 13, "bold"),
+                     text_color=THEME_TEXT).pack(pady=2)
+
+        grid_frame = ctk.CTkFrame(help_frame, fg_color="transparent")
         grid_frame.pack(padx=5, pady=(0, 5))
         items = [
             "1:气血/真元", "2:物攻/法攻", "3:物防/法防",
@@ -106,64 +334,256 @@ class SettingsWindow(tk.Toplevel):
             "7:神通增伤", "8:法宝增伤", "9:古宝增伤"
         ]
         for index, text in enumerate(items):
-            tk.Label(grid_frame, text=text, bg="#f9f9f9", fg="#555555", font=("微软雅黑", 9), width=12, anchor="w").grid(row=index//3, column=index%3, padx=2, pady=2)
+            ctk.CTkLabel(grid_frame, text=text, font=(FONT_FAMILY, 13),
+                         text_color=THEME_TEXT).grid(
+                row=index // 3, column=index % 3, padx=15, pady=3)
 
-        tk.Label(self, text="当前执行顺序 (点击箭头调整)", font=("微软雅黑", 10, "bold"), anchor="w").pack(fill="x", padx=20, pady=(5, 0))
-        self.list_frame = tk.Frame(self, bg="#f0f0f0", bd=1, relief="solid")
-        self.list_frame.pack(fill="x", padx=20, pady=5)
+        # --- 执行顺序标题 ---
+        ctk.CTkLabel(self, text="当前执行顺序 (点击箭头调整)",
+                     font=(FONT_FAMILY, 14, "bold"),
+                     text_color=THEME_TEXT).pack(pady=(5, 0))
+
+        self.list_frame = ctk.CTkFrame(self, fg_color=THEME_BG)
+        self.list_frame.pack(fill="both", expand=True, padx=20, pady=5)
+
         self.render_priority_list()
 
-        tk.Button(self, text="保存并关闭", command=self.save_and_close, bg="#90ee90", font=("微软雅黑", 11, "bold"), width=15).pack(pady=10)
+        ctk.CTkButton(self, text="保存并关闭", width=180, height=40,
+                      font=(FONT_FAMILY, 15, "bold"),
+                      command=self.save_and_close).pack(pady=10)
 
-        info_frame = tk.Frame(self, bg="#f0f0f0", bd=1, relief="solid")
-        info_frame.pack(fill="x", side=tk.BOTTOM, padx=20, pady=(0, 15))
-        
-        author_label = tk.Label(info_frame, text="作者: lsw-one | GitHub: overmortal-road-helper", font=("微软雅黑", 9, "underline"), fg="blue", bg="#f0f0f0", cursor="hand2")
+        # --- 底部信息 ---
+        info_frame = ctk.CTkFrame(self, fg_color="transparent")
+        info_frame.pack(fill="x", side="bottom", padx=20, pady=(0, 5))
+
+        author_label = ctk.CTkLabel(
+            info_frame,
+            text="作者: lsw-one | GitHub: overmortal-road-helper",
+            text_color="#3a7ebf", cursor="hand2",
+            font=(FONT_FAMILY, 12, "underline"))
         author_label.pack(pady=(5, 2))
-        author_label.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/lsw-one/overmortal-road-helper"))
-        
-        disclaimer_text = "免责声明：\n本软件仅供学习交流与个人护肝使用，严禁用于任何商业盈利用途。\n使用本软件产生的一切后果（包括但不限于游戏账号被封禁等）由使用者自行承担。"
-        tk.Label(info_frame, text=disclaimer_text, font=("微软雅黑", 8), fg="#666666", bg="#f0f0f0", justify="center").pack(pady=(0, 5))
+        author_label.bind("<Button-1>",
+                          lambda e: webbrowser.open("https://github.com/lsw-one/overmortal-road-helper"))
 
+        disclaimer_text = "本软件仅供学习交流与个人护肝使用，严禁商业盈利。\n使用本软件产生的一切后果由使用者自行承担。"
+        ctk.CTkLabel(info_frame, text=disclaimer_text, text_color="gray",
+                     font=(FONT_FAMILY, 11), justify="center").pack(pady=(0, 5))
+
+        self.update_idletasks()
+
+        mx = master.winfo_rootx()
+        my = master.winfo_rooty()
+        mw = master.winfo_width()
+        mh = master.winfo_height()
+        x = mx + (mw - w) // 2
+        y = my + (mh - h) // 2
+        if x < 0: x = 0
+        if y < 0: y = 0
+
+        self.geometry(f"{w}x{h}+{x}+{y}")
+        self.transient(master)
+        self.lift()
+        self.focus_force()
+        self.after(50, self.grab_set)
+        self.after(80, lambda: apply_titlebar(self, ctk.get_appearance_mode() == "Dark"))
+
+    # ---------------- 卡片创建 / 布局 ----------------
+    def render_priority_list(self):
+        for widget in self.list_frame.winfo_children():
+            widget.destroy()
+        self.card_widgets.clear()
+        self._last_container_size = None
+
+        self.container = ctk.CTkFrame(self.list_frame, fg_color="transparent")
+        self.container.pack(fill="both", expand=True, padx=5, pady=5)
+        self.container.bind("<Configure>", self._on_container_resize)
+
+        for num in range(1, 10):
+            frame = ctk.CTkFrame(self.container, fg_color=THEME_ROW, corner_radius=8)
+
+            label = ctk.CTkLabel(frame, text="", font=(FONT_FAMILY, 13), anchor="w",
+                                 fg_color="transparent", text_color=THEME_TEXT)
+            label.pack(side="left", fill="x", expand=True, padx=(10, 10))
+
+            down_btn = ctk.CTkButton(frame, text="▼", width=30, height=26,
+                                     fg_color="#555555", hover_color="#777777",
+                                     command=lambda n=num: self._move_card(n, 1))
+            down_btn.pack(side="right", padx=2)
+
+            up_btn = ctk.CTkButton(frame, text="▲", width=30, height=26,
+                                   fg_color="#555555", hover_color="#777777",
+                                   command=lambda n=num: self._move_card(n, -1))
+            up_btn.pack(side="right", padx=2)
+
+            self.card_widgets[num] = {
+                'frame': frame,
+                'label': label,
+                'up': up_btn,
+                'down': down_btn,
+            }
+
+        self.after(20, lambda: self._layout_cards())
+
+    def _on_container_resize(self, event):
+        if self.animating:
+            return
+        if event.width < 50 or event.height < 50:
+            return
+        if self._last_container_size == (event.width, event.height):
+            return
+        self._last_container_size = (event.width, event.height)
+        self._layout_cards(container_w=event.width)
+
+    def _layout_cards(self, container_w=None):
+        if self.animating:
+            return
+        if container_w is None:
+            try:
+                container_w = self.container.winfo_width()
+            except Exception:
+                return
+        if container_w < 50:
+            self.after(30, lambda: self._layout_cards())
+            return
+
+        col_w = (container_w - self.COL_GAP) // 2
+
+        for pos, num in enumerate(self.main_app.current_priority):
+            if num not in self.card_widgets:
+                continue
+            x, y, _ = self._pos_to_xy(pos, container_w)
+            fw = self.card_widgets[num]['frame']
+            # 使用 tk.Place.place 强制分配宽高
+            tk.Place.place(fw, x=x, y=y, width=col_w, height=self.CARD_H)
+
+        self._refresh_all_items()
+
+    def _pos_to_xy(self, pos, container_w):
+        col_w = (container_w - self.COL_GAP) // 2
+        row_h = self.CARD_H + self.ROW_GAP
+        col = 0 if pos < 5 else 1
+        row = pos if pos < 5 else pos - 5
+        return col * (col_w + self.COL_GAP), row * row_h, col_w
+
+    def _refresh_all_items(self):
+        priority = self.main_app.current_priority
+        n = len(priority)
+        for pos, num in enumerate(priority):
+            if num not in self.card_widgets:
+                continue
+            card = self.card_widgets[num]
+            name = SIMING_NAMES.get(num, "未知")
+            card['label'].configure(text=f"{pos+1}. {name}")
+            
+            is_first = (pos == 0)
+            is_last = (pos == n - 1)
+            card['up'].configure(state="disabled" if is_first else "normal")
+            card['down'].configure(state="disabled" if is_last else "normal")
+
+    def _set_buttons_enabled(self, enabled):
+        for cw in self.card_widgets.values():
+            cw['up'].configure(state="normal" if enabled else "disabled")
+            cw['down'].configure(state="normal" if enabled else "disabled")
+
+    # ---------------- 动画 ----------------
+    @staticmethod
+    def _ease_in_out(t):
+        if t < 0.5:
+            return 2 * t * t
+        return 1 - (-2 * t + 2) ** 2 / 2
+
+    def _move_card(self, num, direction):
+        if self.animating:
+            return
+        priority = self.main_app.current_priority
+        try:
+            pos = priority.index(num)
+        except ValueError:
+            return
+        new_pos = pos + direction
+        if not (0 <= new_pos < len(priority)):
+            return
+        self._animate_swap(pos, new_pos)
+
+    def _animate_swap(self, pos_i, pos_j):
+        try:
+            container_w = self.container.winfo_width()
+        except Exception:
+            return
+        priority = self.main_app.current_priority
+
+        if container_w < 50:
+            priority[pos_i], priority[pos_j] = priority[pos_j], priority[pos_i]
+            self._layout_cards()
+            self.update_entry_from_list()
+            return
+
+        num_i = priority[pos_i]
+        num_j = priority[pos_j]
+        if num_i not in self.card_widgets or num_j not in self.card_widgets:
+            return
+
+        xi, yi, card_w = self._pos_to_xy(pos_i, container_w)
+        xj, yj, _ = self._pos_to_xy(pos_j, container_w)
+
+        card_i = self.card_widgets[num_i]['frame']
+        card_j = self.card_widgets[num_j]['frame']
+
+        if yi < yj:
+            card_i.lift()
+        else:
+            card_j.lift()
+
+        self.animating = True
+        self._set_buttons_enabled(False)
+
+        total = self.ANIM_FRAMES
+
+        def step(k):
+            if not self.winfo_exists():
+                return
+            if k > total:
+                tk.Place.place(card_i, x=xj, y=yj, width=card_w, height=self.CARD_H)
+                tk.Place.place(card_j, x=xi, y=yi, width=card_w, height=self.CARD_H)
+                priority[pos_i], priority[pos_j] = num_j, num_i
+                self.animating = False
+                self._refresh_all_items()
+                self.update_entry_from_list()
+                return
+
+            t = self._ease_in_out(k / total)
+            tk.Place.place(card_i, x=xi + (xj - xi) * t,
+                           y=yi + (yj - yi) * t,
+                           width=card_w, height=self.CARD_H)
+            tk.Place.place(card_j, x=xj + (xi - xj) * t,
+                           y=yj + (yi - yj) * t,
+                           width=card_w, height=self.CARD_H)
+            self.after(self.ANIM_INTERVAL, step, k + 1)
+
+        step(0)
+
+    # ---------------- 输入框交互 ----------------
     def sync_from_entry(self):
         try:
             raw_text = self.entry_var.get()
-            nums = [int(x.strip()) for x in raw_text.replace("，", ",").split(",") if x.strip().isdigit()]
-            valid_nums = [n for n in nums if 1 <= n <= 9]
+            nums = [int(x.strip()) for x in raw_text.replace("，", ",").split(",")
+                    if x.strip().isdigit()]
+            valid_nums = []
+            for n in nums:
+                if 1 <= n <= 9 and n not in valid_nums:
+                    valid_nums.append(n)
             for i in range(1, 10):
-                if i not in valid_nums: valid_nums.append(i)
-            self.main_app.current_priority = valid_nums[:9] 
-            self.render_priority_list()
+                if i not in valid_nums:
+                    valid_nums.append(i)
+            self.main_app.current_priority = valid_nums[:9]
+            self._layout_cards()
         except Exception:
-            messagebox.showerror("错误", "输入格式有误，请用逗号分隔数字(1-9)", parent=self)
+            tkinter.messagebox.showerror("错误", "输入格式有误，请用逗号分隔数字(1-9)", parent=self)
 
     def update_entry_from_list(self):
         self.entry_var.set(",".join(str(x) for x in self.main_app.current_priority))
 
-    def render_priority_list(self):
-        for widget in self.list_frame.winfo_children(): widget.destroy()
-        for i, num in enumerate(self.main_app.current_priority):
-            row, col = i % 5, i // 5
-            row_frame = tk.Frame(self.list_frame, bg="#f0f0f0")
-            row_frame.grid(row=row, column=col, padx=20, pady=2, sticky="w")
-            name = SIMING_NAMES.get(num, "未知")
-            tk.Label(row_frame, text=f"{i+1}. {name}", bg="#f0f0f0", font=("微软雅黑", 10, "bold"), width=14, anchor="w").pack(side=tk.LEFT)
-            
-            up_btn = tk.Button(row_frame, text="▲", font=("Arial", 8), width=3, command=lambda idx=i: self.move_item(idx, -1))
-            up_btn.pack(side=tk.LEFT, padx=2)
-            if i == 0: up_btn.config(state=tk.DISABLED)
-            
-            down_btn = tk.Button(row_frame, text="▼", font=("Arial", 8), width=3, command=lambda idx=i: self.move_item(idx, 1))
-            down_btn.pack(side=tk.LEFT, padx=2)
-            if i == len(self.main_app.current_priority) - 1: down_btn.config(state=tk.DISABLED)
-
-    def move_item(self, index, direction):
-        new_index = index + direction
-        if 0 <= new_index < len(self.main_app.current_priority):
-            self.main_app.current_priority[index], self.main_app.current_priority[new_index] = self.main_app.current_priority[new_index], self.main_app.current_priority[index]
-            self.render_priority_list()
-            self.update_entry_from_list()
-
+    # ---------------- 保存 ----------------
     def save_and_close(self):
         self.main_app.adb_port = self.port_entry.get().strip()
         config_data = {
@@ -173,80 +593,141 @@ class SettingsWindow(tk.Toplevel):
         try:
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
                 json.dump(config_data, f, ensure_ascii=False, indent=4)
-            self.main_app.add_log("设置已保存到 config.json")
+            self.main_app.add_log(f"【系统】 设置已保存到 {CONFIG_PATH}")
         except Exception as e:
-            messagebox.showerror("保存失败", f"无法保存配置文件：{e}", parent=self)
-
+            tkinter.messagebox.showerror("保存失败", f"无法保存配置文件：{e}", parent=self)
         self.destroy()
-
 
 # ================= 主界面类 =================
 class GameAutomationApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("一念逍遥·域外古路助手 v1.1") 
-        self.root.geometry("520x600") 
-        self.root.configure(padx=10, pady=10) 
-        
-        try:
-            icon_path = os.path.join(BASE_DIR, "assets", "icon.ico")
-            if not os.path.exists(icon_path):
-                icon_path = os.path.join(BASE_DIR, "icon.ico")
-            if os.path.exists(icon_path):
-                self.root.iconbitmap(icon_path)
-        except Exception as e:
-            print(f"图标加载失败: {e}")
+        self.root.title("一念逍遥·域外古路助手 v2.0")
+
+        w, h = 570, 680
+        self.root.update_idletasks()
+        ws = self.root.winfo_screenwidth()
+        hs = self.root.winfo_screenheight()
+        x = (ws - w) // 2
+        y = (hs - h) // 2
+        self.root.geometry(f"{w}x{h}+{x}+{y}")
+
+        self.root.minsize(540, 600)
+        self.root.resizable(True, True)
+
+        if os.path.exists(ICON_PATH):
+            self.root.iconbitmap(ICON_PATH)
 
         self.is_running = False
+        self.is_paused = False
         self.thread = None
-        self.force_auto_next = False      
-        self.force_challenge_next = False 
+
+        self.is_auto_challenging = False
+        self.force_challenge_next = False
+        self.force_auto_next = False
+        self.check_siming_now = False
+
         self.last_click_time = 0
         self.last_click_pos = (0, 0)
-        self.current_state = "" 
+        self.current_state = ""
         self.fail_count = 0
-        
+
         self.adb_port = "16416"
         self.current_priority = [4, 2, 6, 1, 5, 8, 7, 9, 3]
+        self.img_cache = {}
+
+        self.theme_switcher = ThemeSwitcher(self)
+
+        self.root.configure(fg_color=THEME_BG)
+
+        # 顶部栏
+        top_frame = ctk.CTkFrame(root, fg_color="transparent")
+        top_frame.pack(fill="x", padx=20, pady=(15, 0))
+
+        ctk.CTkLabel(top_frame, text="域外古路助手",
+                     font=(FONT_FAMILY, 22, "bold"),
+                     text_color=THEME_TEXT).pack(side="left")
+
+        set_btn = ctk.CTkButton(top_frame, text="⚙️ 设置", width=70, height=30,
+                                font=(FONT_FAMILY, 13), command=self.open_settings)
+        set_btn.pack(side="right", padx=(10, 0))
+
+        self.theme_btn = ctk.CTkButton(top_frame, text="🌗 切换主题", width=90, height=30,
+                                       font=(FONT_FAMILY, 13), fg_color="gray",
+                                       hover_color="#555555", command=self.toggle_theme)
+        self.theme_btn.pack(side="right")
+
+        # 状态区
+        self.status_label = ctk.CTkLabel(root, text="状态：未启动",
+                                         font=(FONT_FAMILY, 18, "bold"),
+                                         text_color="#e67e22")
+        self.status_label.pack(pady=20)
+
+        # 按钮区
+        btn_frame = ctk.CTkFrame(root, fg_color="transparent")
+        btn_frame.pack(pady=10)
+
+        self.start_btn = ctk.CTkButton(btn_frame, text="开启后台挂机", width=130, height=40,
+                                       font=(FONT_FAMILY, 15, "bold"), fg_color="#2ecc71",
+                                       hover_color="#27ae60", text_color="black",
+                                       command=self.start_task)
+        self.start_btn.pack(side="left", padx=10)
+
+        self.pause_btn = ctk.CTkButton(btn_frame, text="暂停", width=80, height=40,
+                                       font=(FONT_FAMILY, 15, "bold"), fg_color="#f1c40f",
+                                       hover_color="#f39c12", text_color="black",
+                                       state="disabled", command=self.toggle_pause)
+        self.pause_btn.pack(side="left", padx=10)
+
+        self.stop_btn = ctk.CTkButton(btn_frame, text="停止运行", width=100, height=40,
+                                      font=(FONT_FAMILY, 15, "bold"), fg_color="#e74c3c",
+                                      hover_color="#c0392b", text_color="black",
+                                      state="disabled", command=self.stop_task)
+        self.stop_btn.pack(side="left", padx=10)
+
+        # 日志区
+        log_frame = ctk.CTkFrame(root, fg_color="transparent")
+        log_frame.pack(fill="both", expand=True, padx=20, pady=(10, 20))
+
+        ctk.CTkLabel(log_frame, text="操作日志", font=(FONT_FAMILY, 14, "bold"),
+                     text_color=THEME_TEXT).pack(anchor="w")
+
+        self.log_text = ctk.CTkTextbox(log_frame, font=(LOG_FONT, 14), state="disabled",
+                                       fg_color=THEME_LOG_BG, text_color=THEME_LOG_TX)
+        self.log_text.pack(fill="both", expand=True, pady=(5, 0))
 
         self.load_config()
-
-        top_frame = tk.Frame(root)
-        top_frame.pack(fill="x", pady=(0, 10))
-        
-        tk.Label(top_frame, text="域外古路助手", font=("微软雅黑", 14, "bold")).pack(side=tk.LEFT, padx=5)
-        set_btn = tk.Button(top_frame, text="⚙️ 设置", command=self.open_settings, font=("微软雅黑", 10), bg="#e0e0e0")
-        set_btn.pack(side=tk.RIGHT, padx=5)
-
-        control_frame = tk.Frame(root)
-        control_frame.pack(pady=10)
-        
-        self.status_label = tk.Label(control_frame, text="状态：未启动", fg="red", font=("微软雅黑", 14, "bold"))
-        self.status_label.pack(pady=10)
-        
-        btn_frame = tk.Frame(control_frame)
-        btn_frame.pack()
-        
-        self.start_btn = tk.Button(btn_frame, text="开启后台挂机", command=self.start_task, bg="#90ee90", fg="black", font=("微软雅黑", 12, "bold"), width=15)
-        self.start_btn.pack(side=tk.LEFT, padx=15)
-        
-        self.stop_btn = tk.Button(btn_frame, text="停止运行", command=self.stop_task, bg="#ffb6c1", fg="black", font=("微软雅黑", 12, "bold"), width=15, state=tk.DISABLED)
-        self.stop_btn.pack(side=tk.RIGHT, padx=15)
-
-        tk.Label(root, text="操作日志", font=("微软雅黑", 10, "bold"), anchor="w").pack(fill="x", padx=20, pady=(10, 0))
-        self.log_text = scrolledtext.ScrolledText(root, height=18, font=("Consolas", 9), state=tk.DISABLED, bg="#1e1e1e", fg="#d4d4d4")
-        self.log_text.pack(fill=tk.BOTH, expand=True, padx=20, pady=(5, 10))
-
-        # 软件启动时进行路径体检
+        self.root.after(100, self.preload_images)
         self.root.after(500, self.check_files)
-    
+        self.root.after(150, lambda: apply_titlebar(self.root, ctk.get_appearance_mode() == "Dark"))
+
+    def toggle_theme(self):
+        if self.theme_switcher.active:
+            return
+        to_dark = ctk.get_appearance_mode() != "Dark"
+        self.add_log("【系统】 切换到深色模式..." if to_dark else "【系统】 切换到浅色模式...")
+        self.theme_switcher.switch(to_dark)
+
+    def preload_images(self):
+        count = 0
+        for root, dirs, files in os.walk(IMG_DIR):
+            for file in files:
+                if file.lower().endswith(".png"):
+                    full_path = os.path.join(root, file)
+                    template = cv2.imdecode(np.fromfile(full_path, dtype=np.uint8),
+                                            cv2.IMREAD_COLOR)
+                    if template is not None:
+                        self.img_cache[file] = template
+                        self.img_cache[file + "_gray"] = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+                        count += 1
+        self.add_log(f"【系统】 成功预加载 {count} 张图片至内存")
+
     def check_files(self):
-        """启动时检查必要文件是否存在"""
         if not os.path.exists(ADB_PATH):
             self.add_log(f"❌ 严重错误：找不到 adb.exe！\n请检查路径: {ADB_PATH}")
         else:
             self.add_log(f"✅ ADB 工具就绪 ({ADB_CWD})")
-            
+
         test_img = get_img_path('btn_challenge.png')
         if not os.path.exists(test_img):
             self.add_log(f"❌ 严重错误：找不到图片！\n请检查图片文件夹: {IMG_DIR}")
@@ -262,8 +743,11 @@ class GameAutomationApp:
                     priority = data.get("priority_list", [4, 2, 6, 1, 5, 8, 7, 9, 3])
                     if isinstance(priority, list) and len(priority) == 9:
                         self.current_priority = priority
-            except Exception as e:
-                print(f"读取配置失败: {e}")
+                self.add_log(f"【系统】 已成功加载配置文件: {CONFIG_PATH}")
+            except Exception:
+                self.add_log(f"【系统】 读取配置失败，将使用默认值")
+        else:
+            self.add_log(f"【系统】 未找到配置文件，将使用默认端口和排序")
 
     def open_settings(self):
         for child in self.root.winfo_children():
@@ -272,17 +756,15 @@ class GameAutomationApp:
                 return
         SettingsWindow(self.root, self)
 
-    def add_log(self, msg):
+    def add_log(self, msg, color=None):
         self.root.after(0, self._append_log, msg)
 
     def _append_log(self, msg):
         current_time = time.strftime("%H:%M:%S")
-        self.log_text.config(state=tk.NORMAL)
-        self.log_text.insert(tk.END, f"[{current_time}] {msg}\n")
-        if float(self.log_text.index('end-1c').split('.')[0]) > 100:
-            self.log_text.delete('1.0', '2.0')
-        self.log_text.see(tk.END)
-        self.log_text.config(state=tk.DISABLED)
+        self.log_text.configure(state="normal")
+        self.log_text.insert("end", f"[{current_time}] {msg}\n")
+        self.log_text.see("end")
+        self.log_text.configure(state="disabled")
 
     def update_status(self, text, color):
         self.root.after(0, self._update_status_ui, text, color)
@@ -292,26 +774,47 @@ class GameAutomationApp:
 
     def _update_status_ui(self, text, color):
         if self.is_running or "停止" in text:
-            self.status_label.config(text=f"状态：{text}", fg=color)
+            self.status_label.configure(text=f"状态：{text}", text_color=color)
+
+    def safe_sleep(self, seconds):
+        start_t = time.time()
+        while time.time() - start_t < seconds:
+            if not self.is_running:
+                return
+            while self.is_paused and self.is_running:
+                time.sleep(0.05)
+            time.sleep(0.05)
+
+    # ============ 暂停 / 停止闸门 ============
+    def _wait_if_paused(self):
+        while self.is_paused and self.is_running:
+            time.sleep(0.05)
+        return self.is_running
 
     def adb_screenshot(self):
+        if not self._wait_if_paused():
+            return None
         current_port = f"127.0.0.1:{self.adb_port}"
         cmd = f'"{ADB_PATH}" -s {current_port} exec-out screencap -p'
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         try:
-            result = subprocess.run(cmd, shell=True, capture_output=True, startupinfo=startupinfo, cwd=ADB_CWD, timeout=3)
-            if result.returncode != 0 or not result.stdout: return None
+            result = subprocess.run(cmd, shell=True, capture_output=True,
+                                    startupinfo=startupinfo, cwd=ADB_CWD, timeout=2)
+            if result.returncode != 0 or not result.stdout:
+                return None
             img_bytes = np.frombuffer(result.stdout, np.uint8)
             return cv2.imdecode(img_bytes, cv2.IMREAD_COLOR)
-        except Exception as e:
-            print(f"截图异常: {e}")
+        except Exception:
             return None
 
     def adb_click(self, x, y):
+        if not self._wait_if_paused():
+            return
         current_time = time.time()
         if abs(x - self.last_click_pos[0]) < 10 and abs(y - self.last_click_pos[1]) < 10:
-            if current_time - self.last_click_time < 0.5: return
+            if current_time - self.last_click_time < 0.5:
+                return
         self.last_click_pos = (x, y)
         self.last_click_time = current_time
 
@@ -319,218 +822,599 @@ class GameAutomationApp:
         cmd = f'"{ADB_PATH}" -s {current_port} shell input tap {x} {y}'
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo, cwd=ADB_CWD)
+        subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, startupinfo=startupinfo, cwd=ADB_CWD)
+    # =========================================
 
-    def find_image_match(self, screen_img, img_name, use_gray=False):
-        full_path = get_img_path(img_name)
-        if not os.path.exists(full_path) or screen_img is None: return None, 0, None
-        template = cv2.imdecode(np.fromfile(full_path, dtype=np.uint8), cv2.IMREAD_COLOR)
-        if template is None: return None, 0, None
-        if use_gray:
-            screen_img = cv2.cvtColor(screen_img, cv2.COLOR_BGR2GRAY)
-            template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-        result = cv2.matchTemplate(screen_img, template, cv2.TM_CCOEFF_NORMED)
+    def find_image_match(self, screen_img, img_name, use_gray=False, custom_confidence=None):
+        base_name = os.path.basename(img_name)
+        cache_key = base_name + ("_gray" if use_gray else "")
+
+        template = self.img_cache.get(cache_key)
+        if template is None:
+            return None, 0, None
+
+        target_screen = cv2.cvtColor(screen_img, cv2.COLOR_BGR2GRAY) if use_gray else screen_img
+
+        result = cv2.matchTemplate(target_screen, template, cv2.TM_CCOEFF_NORMED)
         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-        if max_val >= IMAGE_CONFIDENCE:
+
+        threshold = custom_confidence if custom_confidence is not None else IMAGE_CONFIDENCE
+
+        if max_val >= threshold:
             h, w = template.shape[:2]
-            return (max_loc[0] + w // 2, max_loc[1] + h // 2), max_val, (max_loc[0], max_loc[1], w, h)
+            return ((max_loc[0] + w // 2, max_loc[1] + h // 2), max_val,
+                    (max_loc[0], max_loc[1], w, h))
         return None, max_val, None
 
     def check_siming_with_dot(self, screen):
         loc, val, rect = self.find_image_match(screen, 'btn_siming_no_dot.png')
-        if rect is None: return False, None
+        if rect is None:
+            return False, None
         base_x, base_y, w, h = rect
-        dot_region = screen[max(0, base_y - 30):min(screen.shape[0], base_y + 60), max(0, base_x + w - 60):min(screen.shape[1], base_x + w + 40)]
+        dot_region = screen[max(0, base_y - 30):min(screen.shape[0], base_y + 60),
+                            max(0, base_x + w - 60):min(screen.shape[1], base_x + w + 40)]
         dot_loc, dot_val, _ = self.find_image_match(dot_region, 'icon_red_dot.png')
-        if dot_loc: return True, (base_x + w // 2, base_y + h // 2)
+        if dot_loc:
+            return True, (base_x + w // 2, base_y + h // 2)
         return False, None
 
     def find_and_click(self, screen_img, img_name):
         loc, _, _ = self.find_image_match(screen_img, img_name)
-        if loc: self.adb_click(loc[0], loc[1]); return True
+        if loc:
+            self.adb_click(loc[0], loc[1])
+            return True
         return False
 
-    def click_challenge(self, x, y):
-        self.update_status("准备点击【前往挑战】", "green")
-        self.adb_click(x, y)
-        self.update_status("正在等待战斗加载...", "green")
-        time.sleep(2.5)
+    # ------------------ 专属状态机 ------------------
+    def fast_track_main_ui(self, timeout=4.0):
+        start_t = time.time()
+        while self.is_running and time.time() - start_t < timeout:
+            if not self._wait_if_paused():
+                return "stopped"
+
+            scr = self.adb_screenshot()
+            if scr is None:
+                self.safe_sleep(0.05)
+                continue
+
+            if self.find_image_match(scr, 'icon_daily_no_prompt.png')[0]:
+                return "popup"
+
+            if self.check_siming_now:
+                has_siming, _ = self.check_siming_with_dot(scr)
+                if has_siming:
+                    return "siming"
+
+            if self.find_image_match(scr, 'daobao/entry.png')[0]:
+                return "daobao"
+
+            c_loc, _, _ = self.find_image_match(scr, 'btn_challenge.png')
+            if c_loc:
+                self.update_status("准备点击【前往挑战】", "#2ecc71")
+                self.add_log("【操作】 极速通道点击【前往挑战】")
+                self.adb_click(c_loc[0], c_loc[1])
+                self.update_status("正在等待战斗加载...", "#2ecc71")
+                self.safe_sleep(2.5)
+                return "challenge"
+            self.safe_sleep(0.05)
+        return "timeout"
+
+    def handle_buff_loop(self, curr_w, curr_h):
+        self.update_status("处理 Buff 界面", "#9b59b6")
+        start_t = time.time()
+
+        while self.is_running and time.time() - start_t < 10.0:
+            if not self._wait_if_paused():
+                return
+
+            screen = self.adb_screenshot()
+            if screen is None:
+                self.safe_sleep(0.1)
+                continue
+
+            heart_loc, _, _ = self.find_image_match(screen, 'icon_heart.png')
+            if heart_loc:
+                self.add_log("【操作】 点击推荐 Buff 选项")
+                self.adb_click(heart_loc[0] + int(145 * (curr_w / BASE_WIDTH)),
+                               heart_loc[1] + int(144 * (curr_h / BASE_HEIGHT)))
+                self.safe_sleep(0.5)
+                if self.find_and_click(screen, 'btn_confirm.png'):
+                    self.add_log("【操作】 点击确定选择")
+                    self.force_auto_next = True
+                    self.safe_sleep(1.0)
+                    return
+            elif self.find_image_match(screen, 'btn_confirm.png')[0]:
+                self.add_log("【操作】 点击盲选默认 Buff")
+                self.adb_click(int(curr_w * 0.505), int(curr_h * 0.409))
+                self.safe_sleep(0.5)
+                if self.find_and_click(screen, 'btn_confirm.png'):
+                    self.add_log("【操作】 点击确定选择")
+                    self.force_auto_next = True
+                    self.safe_sleep(1.0)
+                    return
+            self.safe_sleep(0.1)
+        self.add_log("【系统】 Buff 界面超时，返回主循环", "#e67e22")
 
     def handle_daily_popup(self, screen, curr_w, curr_h):
-        self.update_status("处理弹窗", "#008080")
-        
+        self.update_status("处理弹窗", "#3498db")
         loc, val, rect = self.find_image_match(screen, 'icon_daily_no_prompt.png')
-        if rect is None: return
-        
+        if rect is None:
+            return
+
         text_left_x, text_top_y, text_w, text_h = rect
         scale_x = curr_w / BASE_WIDTH
         circle_x = text_left_x - int(DAILY_CHECKBOX_OFFSET_X * scale_x)
         circle_y = text_top_y + (text_h // 2)
-        
-        self.add_log("勾选 [今日不再提示]")
+
+        self.add_log("【操作】 勾选 [今日不再提示]")
         self.adb_click(circle_x, circle_y)
-        time.sleep(0.8) 
-        
-        screen = self.adb_screenshot() 
+        self.safe_sleep(0.8)
+
+        screen = self.adb_screenshot()
         if screen is not None:
             if self.find_and_click(screen, 'btn_popup_confirm.png'):
-                self.add_log("点击 [确认] 关闭弹窗")
+                self.add_log("【操作】 点击 [确认] 关闭弹窗")
             elif self.find_and_click(screen, 'btn_popup_continue.png'):
-                self.add_log("点击 [继续] 关闭弹窗")
+                self.add_log("【操作】 点击 [继续] 关闭弹窗")
             else:
-                self.add_log("未识别到底部按钮，盲点指定位置关闭", "orange")
+                self.add_log("【操作】 未识别到底部按钮，盲点指定位置关闭")
                 fallback_x = int(1250 * (curr_w / BASE_WIDTH))
                 fallback_y = int(1610 * (curr_h / BASE_HEIGHT))
                 self.adb_click(fallback_x, fallback_y)
-            
-            time.sleep(1.5) 
+
+            self.safe_sleep(1.5)
 
     def handle_siming(self, screen, curr_w, curr_h, loc):
-        self.update_status("处理司命道碑", "#d2691e")
-        self.add_log("发现司命红点，进入界面")
+        self.update_status("处理司命道碑", "#e67e22")
+        self.add_log("【操作】 发现司命红点，进入界面")
         self.adb_click(loc[0], loc[1])
-        time.sleep(1.5)
+        self.safe_sleep(1.5)
 
         priority_list = self.current_priority
-        has_selected = False 
+        has_selected = False
         for opt_num in priority_list:
-            if opt_num not in SIMING_COORDS: continue
+            if not self.is_running:
+                return
+            if opt_num not in SIMING_COORDS:
+                continue
             screen = self.adb_screenshot()
-            if screen is None: continue
+            if screen is None:
+                continue
             scale_x = curr_w / BASE_WIDTH
             scale_y = curr_h / BASE_HEIGHT
             opt_x = int(SIMING_COORDS[opt_num][0] * scale_x)
             opt_y = int(SIMING_COORDS[opt_num][1] * scale_y)
             crop_margin = 150
-            crop_img = screen[max(0, opt_y - crop_margin):min(curr_h, opt_y + crop_margin), max(0, opt_x - crop_margin):min(curr_w, opt_x + crop_margin)]
+            crop_img = screen[max(0, opt_y - crop_margin):min(curr_h, opt_y + crop_margin),
+                              max(0, opt_x - crop_margin):min(curr_w, opt_x + crop_margin)]
             _, sold_out_val, _ = self.find_image_match(crop_img, 'icon_sold_out.png', use_gray=True)
             if sold_out_val < IMAGE_CONFIDENCE:
                 has_selected = True
-                self.update_status(f"自选残纹: {SIMING_NAMES.get(opt_num, str(opt_num))}", "#8a2be2")
+                self.update_status(f"自选残纹: {SIMING_NAMES.get(opt_num, str(opt_num))}", "#9b59b6")
+                self.add_log(f"【操作】 点击残纹选项 {opt_num}")
                 self.adb_click(opt_x, opt_y)
-                time.sleep(0.5)
+                self.safe_sleep(0.5)
                 screen_confirm = self.adb_screenshot()
-                
-                # 【修改点】点击“选择残纹”后，弹出奖励弹窗，盲点 (805, 1870) 关闭
+
                 if self.find_and_click(screen_confirm, 'btn_select_residue.png'):
-                    self.add_log(f"选中 [{SIMING_NAMES.get(opt_num, str(opt_num))}] 并点击确定")
-                    time.sleep(1.5) # 等待奖励弹窗出现
-                    
+                    self.add_log(f"【操作】 选中 [{SIMING_NAMES.get(opt_num, str(opt_num))}] 并点击 [选择残纹]")
+                    self.safe_sleep(1.5)
+
                     close_x = int(805 * (curr_w / BASE_WIDTH))
                     close_y = int(1870 * (curr_h / BASE_HEIGHT))
+                    self.add_log("【操作】 盲点关闭司命奖励弹窗")
                     self.adb_click(close_x, close_y)
-                    
-                    time.sleep(1.5) # 等待弹窗关闭
-                    break 
 
-        # 最后点击返回按钮
+                    self.safe_sleep(1.5)
+                    break
+
+        if not self.is_running:
+            return
         screen_back = self.adb_screenshot()
         if screen_back is not None and self.find_and_click(screen_back, 'btn_back.png'):
-            if has_selected: self.add_log("点击返回，退出司命界面")
-            else: self.add_log("发现全部选满/未开启，点击返回退出")
-            time.sleep(2)
+            if has_selected:
+                self.add_log("【操作】 点击返回，退出司命界面")
+            else:
+                self.add_log("【操作】 发现全部选满/未开启，点击返回退出")
+            self.safe_sleep(2)
 
-    def automation_loop(self):
-        current_port = f"127.0.0.1:{self.adb_port}"
-        self.add_log(f"后台线程已启动，正在连接 ADB: {current_port} ...")
-        subprocess.run(f'"{ADB_PATH}" connect {current_port}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=subprocess.STARTUPINFO(), cwd=ADB_CWD)
+    def handle_daobao(self, screen, curr_w, curr_h):
+        self.update_status("处理道宝升级", "#f1c40f")
+        self.add_log("【操作】 发现道宝可升级，进入界面")
+
+        entry_loc, _, _ = self.find_image_match(screen, 'daobao/entry.png')
+        if not entry_loc:
+            return
         
-        while self.is_running:
-            if not self.is_running: break
+        # 第一次点击入口
+        self.adb_click(entry_loc[0], entry_loc[1])
+        
+        # 使用循环等待进入道宝选择界面，最多等 5 秒（10次 * 0.5s）
+        is_zaohua = False
+        in_choose_screen = False
+        zaohua_loc, pangu_loc = None, None
+        
+        for _ in range(10):
+            self.safe_sleep(0.5)
+            if not self.is_running:
+                return
             screen = self.adb_screenshot()
             if screen is None:
-                self.update_status("ADB未响应，请检查端口", "orange")
-                time.sleep(2)
                 continue
-            self.update_status("扫描中...", "green")
+
+            # 判断是否成功进入了选择界面
+            zaohua_loc, _, _ = self.find_image_match(screen, 'daobao/choose_zaohua.png')
+            if zaohua_loc:
+                in_choose_screen = True
+                is_zaohua = True
+                break
+                
+            pangu_loc, _, _ = self.find_image_match(screen, 'daobao/choose_pangu.png')
+            if pangu_loc:
+                in_choose_screen = True
+                is_zaohua = False
+                break
+                
+            # 如果画面还在挑战主界面（说明上次点击没生效），重新点一次入口
+            if self.find_image_match(screen, 'daobao/entry.png')[0]:
+                self.add_log("【系统】 未成功进入道宝界面，重试点击")
+                self.adb_click(entry_loc[0], entry_loc[1])
+
+        # 如果超时仍未进入，直接 return 交回主循环，绝对不要盲目点返回
+        if not in_choose_screen:
+            self.add_log("【系统】 等待道宝选择界面超时，放弃进入，返回主循环")
+            return
+
+        # 成功进入选择界面，点击具体的道宝
+        if is_zaohua:
+            self.adb_click(zaohua_loc[0], zaohua_loc[1])
+            self.add_log("【操作】 进入造化道果")
+        else:
+            self.adb_click(pangu_loc[0], pangu_loc[1])
+            self.add_log("【操作】 进入盘古神木")
+                
+        self.safe_sleep(2)
+
+        if not self.is_running:
+            return
+        screen = self.adb_screenshot()
+        if screen is None:
+            return
+
+        prefix = "daobao/zaohua" if is_zaohua else "daobao/pangu"
+        opts = [f"{prefix}_opt1.png", f"{prefix}_opt2.png", f"{prefix}_opt3.png"]
+
+        exhausted_opts = []
+        has_gray_nourish = False
+
+        loop_count = 0
+        while self.is_running and loop_count < 30:
+            loop_count += 1
+            if not self._wait_if_paused():
+                return
+
+            screen = self.adb_screenshot()
+            if screen is None:
+                break
+
+            inside_img = f"{prefix}_inside.png"
+            inside_loc, _, _ = self.find_image_match(screen, inside_img)
+            if not inside_loc:
+                self.add_log("【系统】 掉出道宝界面，尝试退出")
+                break
+
+            if self.find_and_click(screen, 'daobao/btn_upgrade_stage.png'):
+                self.add_log("【操作】 点击升阶成功！")
+                self.safe_sleep(2.5)  # 稍微延长等待时间，让升阶动画和弹窗加载出来
+                
+                # ★ 适配分辨率盲点关闭升阶奖励弹窗
+                close_x = int(820 * (curr_w / BASE_WIDTH))
+                close_y = int(2100 * (curr_h / BASE_HEIGHT))
+                self.add_log("【操作】 点击空白处关闭升阶奖励弹窗")
+                self.adb_click(close_x, close_y)
+                
+                self.safe_sleep(1.5)  # 等待弹窗关闭完毕
+                exhausted_opts.clear()
+                continue
+
+            green_loc, green_val, _ = self.find_image_match(screen, 'daobao/btn_nourish_green.png')
+            _, gray_val, _ = self.find_image_match(screen, 'daobao/btn_nourish_gray.png')
+
+            if green_val > gray_val:
+                if green_loc:
+                    self.adb_click(green_loc[0], green_loc[1])
+                    self.add_log("【操作】 点击滋养")
+                    self.safe_sleep(0.4)
+
+                    screen_check = self.adb_screenshot()
+                    if screen_check is not None:
+                        popup_loc, _, _ = self.find_image_match(screen_check, 'daobao/popup_lingye.png')
+                        if popup_loc:
+                            self.add_log("【操作】 发现 [造化灵液] 弹窗，点击关闭")
+                            close_x = int(830 * (curr_w / BASE_WIDTH))
+                            close_y = int(2275 * (curr_h / BASE_HEIGHT))
+                            self.adb_click(close_x, close_y)
+                            self.safe_sleep(0.5)
+                    continue
+
+            if gray_val > 0.6:
+                self.add_log("【系统】 滋养按钮变灰（缺资源），无法升阶，直接退出")
+                has_gray_nourish = True
+                break
+
+            clicked_opt_this_round = False
+            for opt in opts:
+                if not self.is_running:
+                    return
+                if opt in exhausted_opts:
+                    continue
+
+                loc, max_val, _ = self.find_image_match(screen, opt, use_gray=True)
+                if max_val >= 0.55 and loc:
+                    center_x, center_y = loc
+                    self.add_log(f"【操作】 切换属性: {os.path.basename(opt)}")
+                    self.adb_click(center_x, center_y)
+                    self.safe_sleep(0.8)
+
+                    screen_after = self.adb_screenshot()
+                    if screen_after is not None:
+                        _, g_val_after, _ = self.find_image_match(screen_after, 'daobao/btn_nourish_green.png')
+                        _, gr_val_after, _ = self.find_image_match(screen_after, 'daobao/btn_nourish_gray.png')
+
+                        if g_val_after > gr_val_after and g_val_after > 0.6:
+                            pass
+                        elif gr_val_after > 0.6:
+                            self.add_log(f"【系统】 {os.path.basename(opt)} 资源不足（变灰），准备退出")
+                            has_gray_nourish = True
+                        else:
+                            self.add_log(f"【系统】 {os.path.basename(opt)} 满阶（滋养消失）")
+                            exhausted_opts.append(opt)
+                    clicked_opt_this_round = True
+                    break
+
+            if has_gray_nourish:
+                break
+            if clicked_opt_this_round:
+                continue
+
+            if len(exhausted_opts) == 3:
+                self.add_log("【操作】 三个属性均已满阶，尝试点开内部大图升阶")
+                self.adb_click(inside_loc[0], inside_loc[1])
+                self.safe_sleep(1.5)
+
+        if not self.is_running:
+            return
+        self.add_log("【操作】 退出道宝界面")
+
+        screen_back = self.adb_screenshot()
+        if screen_back is not None:
+            self.find_and_click(screen_back, 'btn_back.png')
+            self.safe_sleep(1.5)
+
+            screen_check = self.adb_screenshot()
+            if screen_check is not None:
+                if self.find_image_match(screen_check, 'daobao/choose_zaohua.png')[0] or \
+                   self.find_image_match(screen_check, 'daobao/choose_pangu.png')[0]:
+                    self.add_log("【系统】 仍在道宝选择界面，再次点击返回")
+                    self.find_and_click(screen_check, 'btn_back.png')
+                    self.safe_sleep(1.5)
+                else:
+                    self.add_log("【系统】 已回到主界面")
+
+    # ------------------ 主循环 ------------------
+    def automation_loop(self):
+        current_port = f"127.0.0.1:{self.adb_port}"
+        self.add_log(f"【系统】 正在尝试连接ADB: {current_port} ...")
+
+        try:
+            res = subprocess.run(f'"{ADB_PATH}" connect {current_port}', shell=True,
+                                 capture_output=True, text=True, cwd=ADB_CWD, timeout=5)
+            if "connected" in res.stdout.lower() or "already" in res.stdout.lower():
+                self.add_log(f"✅ ADB 连接成功！")
+            else:
+                self.add_log(f"⚠️ ADB 返回信息: {res.stdout.strip()}")
+        except subprocess.TimeoutExpired:
+            self.add_log(f"❌ ADB 连接超时，请检查模拟器是否卡死！", "#e74c3c")
+        except Exception as e:
+            self.add_log(f"❌ ADB 连接异常: {e}", "#e74c3c")
+
+        while self.is_running:
+            if not self._wait_if_paused():
+                break
+
+            if not self.is_running:
+                break
+
+            screen = self.adb_screenshot()
+            if screen is None:
+                self.update_status("ADB未响应", "#e67e22")
+                self.safe_sleep(2)
+                continue
             curr_h, curr_w = screen.shape[:2]
 
             if self.find_image_match(screen, 'icon_daily_no_prompt.png')[0]:
-                self.handle_daily_popup(screen, curr_w, curr_h); continue
-
-            has_siming, siming_click_loc = self.check_siming_with_dot(screen)
-            if has_siming and siming_click_loc:
-                self.handle_siming(screen, curr_w, curr_h, siming_click_loc); continue
+                self.handle_daily_popup(screen, curr_w, curr_h)
+                self.fast_track_main_ui()
+                continue
 
             if self.find_and_click(screen, 'icon_no_reward.png'):
-                self.update_status("关闭 [无奖励] 弹窗", "red")
+                self.update_status("关闭 [无奖励] 弹窗", "#e74c3c")
+                self.add_log("【操作】 点击空白处关闭无奖励弹窗")
                 close_x = int(804 * (curr_w / BASE_WIDTH))
                 close_y = int(1980 * (curr_h / BASE_HEIGHT))
                 self.adb_click(close_x, close_y)
-                self.force_challenge_next = True; time.sleep(1); continue
+                self.force_challenge_next = True
+                self.is_auto_challenging = False
+                self.fast_track_main_ui()
+                continue
 
-            if self.click_image_claim(screen, curr_w, curr_h):
-                self.force_challenge_next = True; continue
-
-            heart_loc, _, _ = self.find_image_match(screen, 'icon_heart.png')
-            if heart_loc:
-                self.update_status("选择推荐 Buff", "#8a2be2")
-                self.adb_click(heart_loc[0] + int(145 * (curr_w / BASE_WIDTH)), heart_loc[1] + int(144 * (curr_h / BASE_HEIGHT)))
-                time.sleep(0.5)
-                if self.find_and_click(screen, 'btn_confirm.png'):
-                    self.add_log("点击确定选择"); self.force_auto_next = True
-                time.sleep(1); continue
-            elif self.find_image_match(screen, 'btn_confirm.png')[0]:
-                self.update_status("盲选默认 Buff", "#8a2be2")
-                self.adb_click(int(curr_w * 0.505), int(curr_h * 0.409))
-                time.sleep(0.5)
-                if self.find_and_click(screen, 'btn_confirm.png'):
-                    self.add_log("点击确定选择"); self.force_auto_next = True
-                time.sleep(1); continue
+            if self.find_and_click(screen, 'btn_claim.png'):
+                self.update_status("领取奖励", "#3498db")
+                self.add_log("【操作】 点击 [领取奖励] 按钮")
+                self.safe_sleep(1.5)
+                close_x = int(805 * (curr_w / BASE_WIDTH))
+                close_y = int(1870 * (curr_h / BASE_HEIGHT))
+                self.adb_click(close_x, close_y)
+                self.add_log("【操作】 点击空白关闭奖励弹窗")
+                self.force_challenge_next = True
+                self.is_auto_challenging = False
+                self.fast_track_main_ui()
+                continue
 
             if self.find_image_match(screen, 'btn_fail.png')[0]:
                 self.fail_count += 1
-                self.update_status("战斗失败，关闭弹窗", "red")
-                self.add_log(f"本次关卡已连续失败 {self.fail_count} 次")
+                self.update_status("战斗失败，关闭弹窗", "#e74c3c")
+                self.add_log(f"【状态】 本次关卡已连续失败 {self.fail_count} 次")
+                self.add_log("【操作】 点击上方空白关闭失败界面")
                 self.adb_click(curr_w // 2, int(curr_h * 0.30))
-                self.force_challenge_next = True; time.sleep(1); continue
+                self.force_challenge_next = True
+                self.is_auto_challenging = False
+                self.fast_track_main_ui()
+                continue
 
             if self.find_and_click(screen, 'btn_win.png'):
-                self.update_status("战斗胜利，点击感悟", "green")
-                if self.fail_count > 0: self.add_log(f"战斗胜利！清空失败计数 (共凹了 {self.fail_count} 次)")
-                self.fail_count = 0; time.sleep(1); continue
+                self.update_status("战斗胜利，点击感悟", "#2ecc71")
+                self.add_log("【操作】 点击 [感悟道碑残纹]")
+                if self.fail_count > 0:
+                    self.add_log(f"【状态】 战斗胜利！清空失败计数 (共凹了 {self.fail_count} 次)")
+                self.fail_count = 0
+                self.is_auto_challenging = False
+                self.check_siming_now = True
 
-            if self.find_and_click(screen, 'icon_side.png'):
-                self.update_status("点击侧边道碑残纹", "#d2691e"); time.sleep(1); continue
+                self.safe_sleep(0.8)
+                self.handle_buff_loop(curr_w, curr_h)
+                continue
+
+            side_loc = None
+            base_name = os.path.basename('icon_side.png')
+            template = self.img_cache.get(base_name)
+            if template is not None:
+                result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(result)
+                if max_val >= 0.55:
+                    side_loc = (max_loc[0] + template.shape[1] // 2,
+                                max_loc[1] + template.shape[0] // 2)
+
+            if side_loc:
+                self.update_status("点击侧边道碑残纹", "#e67e22")
+                self.add_log("【操作】 点击侧边道碑残纹图标")
+                self.adb_click(side_loc[0], side_loc[1])
+                self.safe_sleep(1.0)
+
+                self.handle_buff_loop(curr_w, curr_h)
+                continue
+
+            if self.check_siming_now:
+                has_siming, siming_click_loc = self.check_siming_with_dot(screen)
+                if has_siming and siming_click_loc:
+                    self.check_siming_now = False
+                    self.handle_siming(screen, curr_w, curr_h, siming_click_loc)
+                    continue
+
+                self.check_siming_now = False
+
+            if self.find_image_match(screen, 'daobao/entry.png')[0]:
+                self.handle_daobao(screen, curr_w, curr_h)
+                continue
+
+            if self.force_auto_next:
+                auto_loc, auto_val, _ = self.find_image_match(screen, 'btn_auto.png', custom_confidence=0.4)
+                if auto_loc:
+                    self.adb_click(auto_loc[0], auto_loc[1])
+                    self.update_status("开启自动挑战", "#2ecc71")
+                    self.add_log("【操作】 点击 [自动挑战] 按钮")
+                    self.force_auto_next = False
+                    self.is_auto_challenging = True
+                    self.safe_sleep(1.5)
+                    continue
+                else:
+                    self.add_log(f"【等待】 暂未找到自动挑战 (相似度:{auto_val:.2f})", "#e67e22")
+                    self.safe_sleep(0.5)
+                    continue
 
             challenge_loc, _, _ = self.find_image_match(screen, 'btn_challenge.png')
             if challenge_loc:
                 if self.force_challenge_next:
-                    self.force_challenge_next = False; self.click_challenge(challenge_loc[0], challenge_loc[1]); continue
-                if self.force_auto_next:
-                    if self.find_and_click(screen, 'btn_auto.png'):
-                        self.update_status("开启自动挑战", "green"); self.add_log("已点击自动挑战按钮")
-                        self.force_auto_next = False; time.sleep(2); continue
-                    else:
-                        self.force_auto_next = False; self.click_challenge(challenge_loc[0], challenge_loc[1]); continue
-                self.click_challenge(challenge_loc[0], challenge_loc[1]); continue
-            time.sleep(LOOP_DELAY)
-        self.add_log("后台线程已安全退出。")
+                    self.force_challenge_next = False
+                    self.update_status("准备点击【前往挑战】", "#2ecc71")
+                    self.add_log("【操作】 点击【前往挑战】")
+                    self.adb_click(challenge_loc[0], challenge_loc[1])
+                    self.update_status("正在等待战斗加载...", "#2ecc71")
+                    self.safe_sleep(2.5)
+                    continue
 
-    def click_image_claim(self, screen, curr_w, curr_h):
-        loc, _, _ = self.find_image_match(screen, 'btn_claim.png')
-        if loc:
-            self.update_status("点击 [领取奖励]", "blue")
-            self.adb_click(loc[0], loc[1]); time.sleep(1.5) 
-            self.adb_click(int(REWARD_CLOSE_POS[0] * (curr_w / BASE_WIDTH)), int(REWARD_CLOSE_POS[1] * (curr_h / BASE_HEIGHT)))
-            self.add_log("领取完毕，关闭奖励弹窗"); time.sleep(1); return True
-        return False
+                if not self.is_auto_challenging:
+                    self.update_status("准备点击【前往挑战】", "#2ecc71")
+                    self.add_log("【操作】 点击【前往挑战】")
+                    self.adb_click(challenge_loc[0], challenge_loc[1])
+                    self.safe_sleep(2.5)
+                    continue
+                else:
+                    self.is_auto_challenging = False
+                    continue
+
+            if self.is_auto_challenging:
+                self.update_status("自动挑战中...", "gray")
+            else:
+                self.update_status("等待画面刷新...", "gray")
+            self.safe_sleep(0.1)
+
+        self.add_log("【系统】 后台线程已安全退出。")
 
     def start_task(self):
         if not self.is_running:
-            self.is_running = True; self.current_state = ""; self.fail_count = 0 
-            self.start_btn.config(state=tk.DISABLED); self.stop_btn.config(state=tk.NORMAL)
-            self.update_status("启动成功，准备扫描...", "green")
-            self.thread = threading.Thread(target=self.automation_loop, daemon=True); self.thread.start()
+            self.is_running = True
+            self.is_paused = False
+            self.current_state = ""
+            self.fail_count = 0
+            self.is_auto_challenging = False
+            self.force_challenge_next = False
+            self.force_auto_next = False
+            self.check_siming_now = False
+
+            self.start_btn.configure(state="disabled")
+            self.pause_btn.configure(state="normal", text="暂停", fg_color="#f1c40f",
+                                     hover_color="#f39c12", text_color="black")
+            self.stop_btn.configure(state="normal")
+
+            self.update_status("启动成功，准备扫描...", "#2ecc71")
+            self.thread = threading.Thread(target=self.automation_loop, daemon=True)
+            self.thread.start()
+
+    def toggle_pause(self):
+        if self.is_running:
+            if not self.is_paused:
+                self.is_paused = True
+                self.pause_btn.configure(text="继续", fg_color="#3498db",
+                                         hover_color="#2980b9", text_color="white")
+                self.update_status("已暂停", "#f1c40f")
+                self.add_log("【系统】 用户点击了暂停")
+            else:
+                self.is_paused = False
+                self.pause_btn.configure(text="暂停", fg_color="#f1c40f",
+                                         hover_color="#f39c12", text_color="black")
+                self.update_status("恢复运行中...", "#2ecc71")
+                self.add_log("【系统】 用户点击了继续")
 
     def stop_task(self):
         if self.is_running:
             self.is_running = False
-            self.start_btn.config(state=tk.NORMAL); self.stop_btn.config(state=tk.DISABLED)
-            self.status_label.config(text="状态：已停止", fg="red")
-            self.add_log("用户手动停止运行。")
+            self.is_paused = False
+            self.start_btn.configure(state="normal")
+            self.pause_btn.configure(state="disabled", text="暂停",
+                                     fg_color="#f1c40f", text_color="black")
+            self.stop_btn.configure(state="disabled")
+            self.update_status("已停止", "#e74c3c")
+            self.add_log("【系统】 用户手动停止运行。")
 
 if __name__ == "__main__":
-    root = tk.Tk()
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        pass
+
+    ctk.set_appearance_mode("dark")
+    root = ctk.CTk()
     app = GameAutomationApp(root)
     root.mainloop()
