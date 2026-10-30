@@ -10,9 +10,8 @@ import os
 import sys
 import json
 import webbrowser
-import ctypes # 【新增】用于处理高分辨率缩放
+import ctypes # 用于处理高分辨率缩放
 import random # 用于随机偏移防检测
-import winsound # ★ 新增：用于播放警报声音
 
 # ================= 配置区域 =================
 IMAGE_CONFIDENCE = 0.65       
@@ -21,7 +20,7 @@ BASE_WIDTH = 1660
 BASE_HEIGHT = 2560
 CONFIG_FILE = "config.json"
 CLICK_OFFSET = 8  
-STUCK_TIMEOUT = 180 # ★ 新增：超过多少秒未点击判定为卡死（3分钟）
+STUCK_TIMEOUT = 180 # 超过多少秒未点击判定为卡死（3分钟）
 
 SIMING_NAMES = {
     1: "气血/真元", 2: "物攻/法攻", 3: "物防/法防",
@@ -298,7 +297,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self.port_entry.insert(0, main_app.adb_port)
         self.port_entry.grid(row=0, column=1, padx=10)
 
-        ctk.CTkLabel(dev_frame, text="(MuMu通常为 16384 或 16416)", text_color="gray",
+        ctk.CTkLabel(dev_frame, text="(具体查看在模拟器里)", text_color="gray",
                      font=(FONT_FAMILY, 12)).grid(row=0, column=2, padx=(0, 10))
 
         # --- 优先级标题 ---
@@ -601,7 +600,7 @@ class SettingsWindow(ctk.CTkToplevel):
 class GameAutomationApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("一念逍遥·域外古路助手 v2.0")
+        self.root.title("一念逍遥·域外古路助手 v2.1")
 
         w, h = 570, 680
         self.root.update_idletasks()
@@ -631,11 +630,10 @@ class GameAutomationApp:
         self.current_state = ""
         self.fail_count = 0
         
-        # ★ 新增：任务栏闪烁相关变量
         self.last_action_time = time.time() 
         self.alert_triggered = False
 
-        self.adb_port = "16416"
+        self.adb_port = "16448"
         self.current_priority = [4, 2, 6, 1, 5, 8, 7, 9, 3]
         self.img_cache = {}
 
@@ -742,7 +740,7 @@ class GameAutomationApp:
             try:
                 with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    self.adb_port = data.get("adb_port", "16416")
+                    self.adb_port = data.get("adb_port", "16448")
                     priority = data.get("priority_list", [4, 2, 6, 1, 5, 8, 7, 9, 3])
                     if isinstance(priority, list) and len(priority) == 9:
                         self.current_priority = priority
@@ -760,12 +758,19 @@ class GameAutomationApp:
         SettingsWindow(self.root, self)
 
     def add_log(self, msg, color=None):
-        self.root.after(0, self._append_log, msg)
+        self.root.after(0, self._append_log, msg, color)
 
-    def _append_log(self, msg):
+    def _append_log(self, msg, color=None):
         current_time = time.strftime("%H:%M:%S")
         self.log_text.configure(state="normal")
-        self.log_text.insert("end", f"[{current_time}] {msg}\n")
+
+        if color:
+            tag_name = f"tag_{color.replace('#', '')}"
+            self.log_text.tag_config(tag_name, foreground=color)
+            self.log_text.insert("end", f"[{current_time}] {msg}\n", tag_name)
+        else:
+            self.log_text.insert("end", f"[{current_time}] {msg}\n")
+
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
 
@@ -815,42 +820,30 @@ class GameAutomationApp:
             return
         current_time = time.time()
         
-        # 1. 防抖判断：必须用原始坐标判断（防止偏移后导致判断失效）
         if abs(x - self.last_click_pos[0]) < 10 and abs(y - self.last_click_pos[1]) < 10:
             if current_time - self.last_click_time < 0.5:
                 return
         self.last_click_pos = (x, y)
         self.last_click_time = current_time
         
-        # ★ 新增：每次点击时刷新最后动作时间，并重置警报状态
         self.last_action_time = time.time()
         self.alert_triggered = False
 
-        # 2. 生成随机偏移
         offset_x = random.randint(-CLICK_OFFSET, CLICK_OFFSET)
         offset_y = random.randint(-CLICK_OFFSET, CLICK_OFFSET)
         actual_x = x + offset_x
         actual_y = y + offset_y
 
-        # 3. 发送实际带偏移的坐标
         current_port = f"127.0.0.1:{self.adb_port}"
         cmd = f'"{ADB_PATH}" -s {current_port} shell input tap {actual_x} {actual_y}'
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL, startupinfo=startupinfo, cwd=ADB_CWD)
-    # =========================================
 
-    # ★ 新增：任务栏闪烁与提示音方法
     def flash_taskbar(self):
         if os.name != 'nt':
             return
-        try:
-            # 播放急促的提示音
-            winsound.Beep(1000, 400)
-            winsound.Beep(1500, 400)
-        except Exception:
-            pass
             
         try:
             hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
@@ -867,7 +860,6 @@ class GameAutomationApp:
             fw = FLASHWINFO()
             fw.cbSize = ctypes.sizeof(FLASHWINFO)
             fw.hwnd = hwnd
-            # FLASHW_ALL(3) 闪烁标题栏和任务栏 | FLASHW_TIMERNOFG(12) 一直闪烁直到窗口回到前台
             fw.dwFlags = 3 | 12 
             fw.uCount = 0
             fw.dwTimeout = 0
@@ -875,16 +867,96 @@ class GameAutomationApp:
         except Exception:
             pass
 
-    # ★ 新增：后台看门狗线程，监控是否卡死
+    def rescue_step(self):
+        """单次抢救动作：根据识别到的特征，执行一步脱困操作"""
+        screen = self.adb_screenshot()
+        if screen is None:
+            return
+        curr_h, curr_w = screen.shape[:2]
+
+        # 1. 处理日常弹窗
+        if self.find_image_match(screen, 'icon_daily_no_prompt.png')[0]:
+            self.add_log("【抢救】 发现日常弹窗，强制处理", "#e67e22")
+            self.handle_daily_popup(screen, curr_w, curr_h)
+            return
+
+        # 2. 处理无奖励弹窗
+        if self.find_image_match(screen, 'icon_no_reward.png')[0]:
+            self.add_log("【抢救】 发现无奖励弹窗，强制关闭", "#e67e22")
+            self.wait_and_close_popup('icon_no_reward.png', 1.0, int(804 * (curr_w / BASE_WIDTH)), int(1980 * (curr_h / BASE_HEIGHT)), action_name="无奖励")
+            return
+
+        # 3. 处理领奖/恭喜获得
+        if self.find_image_match(screen, 'btn_claim.png')[0] or self.find_image_match(screen, 'text_congrats.png')[0]:
+            self.add_log("【抢救】 发现领奖/恭喜获得特征，强制关闭", "#e67e22")
+            self.wait_and_close_popup('text_congrats.png', 1.0, int(805 * (curr_w / BASE_WIDTH)), int(1870 * (curr_h / BASE_HEIGHT)), action_name="恭喜获得")
+            return
+
+        # 4. 处理战斗失败/胜利/Buff界面
+        if self.find_image_match(screen, 'btn_fail.png')[0]:
+            self.add_log("【抢救】 发现失败界面，点击空白", "#e67e22")
+            self.adb_click(curr_w // 2, int(curr_h * 0.30))
+            return
+
+        if self.find_image_match(screen, 'btn_win.png')[0] or self.find_image_match(screen, 'icon_heart.png')[0]:
+            self.add_log("【抢救】 发现胜利/选Buff特征，盲点中心", "#e67e22")
+            self.adb_click(int(curr_w * 0.505), int(curr_h * 0.409))
+            self.adb_click(int(curr_w * 0.505), int(curr_h * 0.745))
+            return
+
+        # 5. 处理道宝/司命界面（只要确认了在这俩界面，就放心点返回）
+        if self.find_image_match(screen, 'text_upgrade_success.png')[0] or \
+           self.find_image_match(screen, 'daobao/popup_lingye.png')[0] or \
+           self.find_image_match(screen, 'daobao/zaohua/zaohua_inside.png')[0] or \
+           self.find_image_match(screen, 'daobao/pangu/pangu_inside.png')[0] or \
+           self.find_image_match(screen, 'btn_select_residue.png')[0] or \
+           self.find_image_match(screen, 'btn_siming_no_dot.png')[0]:
+            
+            self.add_log("【抢救】 确认在道宝/司命界面，点击返回", "#e67e22")
+            if self.find_and_click(screen, 'btn_back.png'):
+                return
+
+        # 如果啥也匹配不上，干等
+        self.add_log("【抢救】 未识别到任何已知特征，等待画面变化...", "#e67e22")
+
     def watchdog_thread(self):
         while self.is_running:
-            # 只有在运行中且未暂停时才检查
             if not self.is_paused:
                 if time.time() - self.last_action_time > STUCK_TIMEOUT:
                     if not self.alert_triggered:
-                        self.add_log(f"⚠️ 超过 {STUCK_TIMEOUT//60} 分钟未进行任何点击操作，可能已卡死！触发任务栏闪烁警报。", "#e74c3c")
-                        self.flash_taskbar()
+                        # ★ 触发时：只记日志，不闪烁
+                        self.add_log(f"⚠️ 超过 {STUCK_TIMEOUT//60} 分钟未操作，正在后台尝试故障抢救...", "#e67e22")
                         self.alert_triggered = True
+                        
+                        rescue_start_time = time.time()
+                        rescued = False
+                        
+                        while self.is_running and (time.time() - rescue_start_time < 60):
+                            if not self._wait_if_paused():
+                                break
+                                
+                            # 判断是否回到主界面
+                            screen = self.adb_screenshot()
+                            if screen is not None:
+                                if self.find_image_safe(screen, 'btn_challenge.png', min_conf=0.85, min_bright=20)[0] or \
+                                   self.find_image_safe(screen, 'btn_auto.png', min_conf=0.75, min_bright=40)[0] or \
+                                   self.find_image_safe(screen, 'daobao/entry.png', min_conf=0.85, min_bright=40)[0]: 
+                                    self.add_log("【抢救】 已确认回到挑战主界面！抢救结束。", "#2ecc71")
+                                    rescued = True
+                                    break
+                                    
+                            self.rescue_step()
+                            self.safe_sleep(2.0)
+                            
+                        # ★ 结果判定
+                        if rescued:
+                            self.last_action_time = time.time()
+                            self.alert_triggered = False
+                        else:
+                            # ★ 只有抢救彻底失败，才闪烁报警并暂停
+                            self.add_log("❌ 抢救超过1分钟仍未回到主界面，自动暂停脚本", "#e74c3c")
+                            self.flash_taskbar()
+                            self.root.after(0, self.toggle_pause, True)
             time.sleep(5)
 
     def find_image_match(self, screen_img, img_name, use_gray=False, custom_confidence=None):
@@ -921,24 +993,43 @@ class GameAutomationApp:
             
         return loc, max_val
 
-    def click_and_verify(self, verify_img_name, fallback_x, fallback_y, is_gray=False, max_retries=2):
-        self.add_log(f"【操作】 准备盲点关闭弹窗")
-        for i in range(max_retries):
-            self.adb_click(fallback_x, fallback_y)
-            self.safe_sleep(0.8)
+    # ★ 新增：等待特定文字出现，并闭环关闭弹窗
+    def wait_and_close_popup(self, text_img, wait_time, close_x, close_y, action_name="弹窗"):
+        self.add_log(f"【系统】 等待 [{action_name}] 出现 (最多 {wait_time} 秒)...")
+        start_t = time.time()
+        found = False
+        
+        # 1. 等待文字出现
+        while time.time() - start_t < wait_time:
+            if not self.is_running: return
+            screen = self.adb_screenshot()
+            if screen is not None:
+                loc, _, _ = self.find_image_match(screen, text_img, custom_confidence=0.7)
+                if loc:
+                    found = True
+                    break
+            self.safe_sleep(0.3)
+        
+        # 2. 执行关闭动作（如果没找到也去点一下，作为兜底）
+        if not found:
+            self.add_log(f"【系统】 未识别到 [{action_name}] 文字，直接执行坐标点击", "#e67e22")
+        else:
+            self.add_log(f"【操作】 发现 [{action_name}]，准备点击坐标关闭")
+
+        for i in range(2):
+            self.adb_click(close_x, close_y)
+            self.safe_sleep(1.0)
             
             screen = self.adb_screenshot()
-            if screen is None:
-                return
-                
-            loc, _ = self.find_image_match(screen, verify_img_name, use_gray=is_gray)
+            if screen is None: return
+            loc, _, _ = self.find_image_match(screen, text_img, custom_confidence=0.7)
             if not loc:
-                self.add_log("【系统】 弹窗已成功关闭")
+                self.add_log(f"【系统】 [{action_name}] 已成功关闭")
                 return
             else:
-                self.add_log(f"【系统】 弹窗未消失，第 {i+1} 次重试盲点")
-        
-        self.add_log("【系统】 多次盲点仍无法关闭弹窗，放弃", "#e74c3c")
+                self.add_log(f"【系统】 [{action_name}] 未消失，重试点击", "#e67e22")
+                
+        self.add_log(f"【系统】 多次点击仍无法关闭 [{action_name}]，放弃", "#e74c3c")
 
     def check_siming_with_dot(self, screen):
         loc, val, rect = self.find_image_match(screen, 'btn_siming_no_dot.png')
@@ -973,14 +1064,26 @@ class GameAutomationApp:
 
             if self.find_image_match(scr, 'icon_daily_no_prompt.png')[0]:
                 return "popup"
+                
+            # ★ 修复：如果极速通道里看到了领奖弹窗、无奖励、恭喜获得、升阶成功，直接退出，交回主循环处理
+            if self.find_image_match(scr, 'btn_claim.png')[0] or \
+               self.find_image_match(scr, 'icon_no_reward.png')[0] or \
+               self.find_image_match(scr, 'text_congrats.png')[0] or \
+               self.find_image_match(scr, 'text_upgrade_success.png')[0]:
+                return "timeout"
 
             c_loc, _ = self.find_image_safe(scr, 'btn_challenge.png', min_conf=0.8, min_bright=20)
             if c_loc:
-                self.update_status("极速通道点击【前往挑战】", "#2ecc71")
+                self.update_status("进入极速通道", "#2ecc71")
                 self.add_log("【操作】 极速通道点击【前往挑战】")
                 self.adb_click(c_loc[0], c_loc[1])
                 self.update_status("正在等待战斗加载...", "#2ecc71")
-                self.safe_sleep(2.5)
+                # ★ 动态等待
+                for _ in range(8):
+                    self.safe_sleep(0.5)
+                    chk = self.adb_screenshot()
+                    if chk is None or not self.find_image_safe(chk, 'btn_challenge.png', min_conf=0.85, min_bright=25)[0]:
+                        break
                 return "challenge"
             self.safe_sleep(0.05)
         return "timeout"
@@ -1070,10 +1173,13 @@ class GameAutomationApp:
             scale_y = curr_h / BASE_HEIGHT
             opt_x = int(SIMING_COORDS[opt_num][0] * scale_x)
             opt_y = int(SIMING_COORDS[opt_num][1] * scale_y)
-            crop_margin = 150
+            
+            crop_margin = 150 
             crop_img = screen[max(0, opt_y - crop_margin):min(curr_h, opt_y + crop_margin),
                               max(0, opt_x - crop_margin):min(curr_w, opt_x + crop_margin)]
+            
             _, sold_out_val, _ = self.find_image_match(crop_img, 'icon_sold_out.png', use_gray=True)
+            
             if sold_out_val < IMAGE_CONFIDENCE:
                 has_selected = True
                 self.update_status(f"自选残纹: {SIMING_NAMES.get(opt_num, str(opt_num))}", "#9b59b6")
@@ -1084,18 +1190,11 @@ class GameAutomationApp:
 
                 if self.find_and_click(screen_confirm, 'btn_select_residue.png'):
                     self.add_log(f"【操作】 选中 [{SIMING_NAMES.get(opt_num, str(opt_num))}] 并点击 [选择残纹]")
-                    self.safe_sleep(1.5)
-
-                    screen_after_select = self.adb_screenshot()
-                    if screen_after_select is not None and self.find_image_match(screen_after_select, 'icon_daily_no_prompt.png')[0]:
-                        self.add_log("【系统】 发现日常弹窗拦截，先处理日常弹窗")
-                        self.handle_daily_popup(screen_after_select, curr_w, curr_h)
-                        self.safe_sleep(1.0)
-
+                    
                     close_x = int(805 * (curr_w / BASE_WIDTH))
                     close_y = int(1870 * (curr_h / BASE_HEIGHT))
-                    self.click_and_verify('btn_select_residue.png', close_x, close_y)
-                    self.safe_sleep(1.5)
+                    # ★ 改为等待 恭喜获得 文字并关闭
+                    self.wait_and_close_popup('text_congrats.png', 2.0, close_x, close_y, action_name="司命奖励")
                     break
 
         if not self.is_running:
@@ -1190,13 +1289,12 @@ class GameAutomationApp:
 
             if self.find_and_click(screen, 'daobao/btn_upgrade_stage.png'):
                 self.add_log("【操作】 点击升阶成功！")
-                self.safe_sleep(2.5)
                 
                 close_x = int(820 * (curr_w / BASE_WIDTH))
                 close_y = int(2100 * (curr_h / BASE_HEIGHT))
-                self.click_and_verify(inside_img, close_x, close_y)
+                # ★ 改为等待 升阶成功 文字并关闭，时间根据你说的设为 4.5 秒
+                self.wait_and_close_popup('text_upgrade_success.png', 4.5, close_x, close_y, action_name="升阶成功")
                 
-                self.safe_sleep(1.5)
                 exhausted_opts.clear()
                 continue
 
@@ -1216,7 +1314,7 @@ class GameAutomationApp:
                             self.add_log("【操作】 发现 [造化灵液] 弹窗，点击关闭")
                             close_x = int(830 * (curr_w / BASE_WIDTH))
                             close_y = int(2275 * (curr_h / BASE_HEIGHT))
-                            self.click_and_verify('daobao/popup_lingye.png', close_x, close_y)
+                            self.wait_and_close_popup('daobao/popup_lingye.png', 2.0, close_x, close_y, action_name="造化灵液")
                             self.safe_sleep(0.5)
                     continue
 
@@ -1322,10 +1420,9 @@ class GameAutomationApp:
 
             if self.find_and_click(screen, 'icon_no_reward.png'):
                 self.update_status("关闭 [无奖励] 弹窗", "#e74c3c")
-                self.add_log("【操作】 点击空白处关闭无奖励弹窗")
                 close_x = int(804 * (curr_w / BASE_WIDTH))
                 close_y = int(1980 * (curr_h / BASE_HEIGHT))
-                self.adb_click(close_x, close_y)
+                self.wait_and_close_popup('icon_no_reward.png', 2.0, close_x, close_y, action_name="无奖励")
                 self.force_challenge_next = True
                 self.is_auto_challenging = False
                 self.fast_track_main_ui()
@@ -1334,11 +1431,10 @@ class GameAutomationApp:
             if self.find_and_click(screen, 'btn_claim.png'):
                 self.update_status("领取奖励", "#3498db")
                 self.add_log("【操作】 点击 [领取奖励] 按钮")
-                self.safe_sleep(1.5)
                 close_x = int(805 * (curr_w / BASE_WIDTH))
                 close_y = int(1870 * (curr_h / BASE_HEIGHT))
-                self.adb_click(close_x, close_y)
-                self.add_log("【操作】 点击空白关闭奖励弹窗")
+                # ★ 改为等待 恭喜获得 文字并关闭
+                self.wait_and_close_popup('text_congrats.png', 2.0, close_x, close_y, action_name="战斗奖励")
                 self.force_challenge_next = True
                 self.is_auto_challenging = False
                 self.fast_track_main_ui()
@@ -1346,7 +1442,7 @@ class GameAutomationApp:
 
             if self.find_image_match(screen, 'btn_fail.png')[0]:
                 self.fail_count += 1
-                self.update_status("战斗失败，关闭弹窗", "#e74c3c")
+                self.update_status("战斗失败", "#e74c3c")
                 self.add_log(f"【状态】 本次关卡已连续失败 {self.fail_count} 次")
                 
                 close_success = False
@@ -1358,7 +1454,7 @@ class GameAutomationApp:
                         
                     self.add_log(f"【操作】 点击上方空白关闭失败界面 (尝试 {attempt})")
                     self.adb_click(curr_w // 2, int(curr_h * 0.30))
-                    self.safe_sleep(1.5) 
+                    self.safe_sleep(0.6) 
                     
                     check_scr = self.adb_screenshot()
                     if check_scr is not None and not self.find_image_match(check_scr, 'btn_fail.png')[0]:
@@ -1387,39 +1483,19 @@ class GameAutomationApp:
                 self.handle_buff_loop(curr_w, curr_h)
                 continue
 
-            side_loc = None
-            base_name = os.path.basename('icon_side.png')
-            template = self.img_cache.get(base_name)
-            if template is not None:
-                result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
-                _, max_val, _, max_loc = cv2.minMaxLoc(result)
-                if max_val >= 0.55:
-                    side_loc = (max_loc[0] + template.shape[1] // 2,
-                                max_loc[1] + template.shape[0] // 2)
-
-            if side_loc:
-                self.update_status("点击侧边道碑残纹", "#e67e22")
-                self.add_log("【操作】 点击侧边道碑残纹图标")
-                self.adb_click(side_loc[0], side_loc[1])
-                self.safe_sleep(1.0)
-
-                self.handle_buff_loop(curr_w, curr_h)
+            # 1. ★ 司命优先查验（不受状态锁限制，只要出现了就点）
+            has_siming, siming_click_loc = self.check_siming_with_dot(screen)
+            if has_siming and siming_click_loc:
+                self.handle_siming(screen, curr_w, curr_h, siming_click_loc)
                 continue
 
-            if self.check_siming_now:
-                has_siming, siming_click_loc = self.check_siming_with_dot(screen)
-                if has_siming and siming_click_loc:
-                    self.check_siming_now = False
-                    self.handle_siming(screen, curr_w, curr_h, siming_click_loc)
-                    continue
-
-                self.check_siming_now = False
-
+            # 2. ★ 道宝检测
             entry_loc, _ = self.find_image_safe(screen, 'daobao/entry.png', min_conf=0.8, min_bright=40)
             if entry_loc:
                 self.handle_daobao(screen, curr_w, curr_h)
                 continue
 
+            # 3. ★ 自动挑战 / 前往挑战（主界面优先推进）
             if self.force_auto_next:
                 auto_loc, auto_val = self.find_image_safe(screen, 'btn_auto.png', min_conf=0.6, min_bright=40)
                 if auto_loc:
@@ -1437,24 +1513,53 @@ class GameAutomationApp:
 
             challenge_loc, _ = self.find_image_safe(screen, 'btn_challenge.png', min_conf=0.8, min_bright=20)
             if challenge_loc:
+                self.safe_sleep(0.5)
+                check_screen = self.adb_screenshot()
+                if check_screen is not None:
+                    if self.find_image_match(check_screen, 'btn_claim.png')[0] or \
+                       self.find_image_match(check_screen, 'btn_win.png')[0] or \
+                       self.find_image_match(check_screen, 'icon_no_reward.png')[0]:
+                        self.add_log("【系统】 发现结算按钮覆盖，暂缓点挑战", "#e67e22")
+                        continue
+
                 if self.force_challenge_next:
                     self.force_challenge_next = False
                     self.update_status("准备点击【前往挑战】", "#2ecc71")
                     self.add_log("【操作】 点击【前往挑战】")
                     self.adb_click(challenge_loc[0], challenge_loc[1])
                     self.update_status("正在等待战斗加载...", "#2ecc71")
-                    self.safe_sleep(2.5)
+                    # ★ 动态等待：最多等 4 秒，只要挑战按钮消失了就立刻走
+                    for _ in range(8):
+                        self.safe_sleep(0.5)
+                        chk = self.adb_screenshot()
+                        if chk is None or not self.find_image_safe(chk, 'btn_challenge.png', min_conf=0.85, min_bright=25)[0]:
+                            break
                     continue
 
                 if not self.is_auto_challenging:
                     self.update_status("准备点击【前往挑战】", "#2ecc71")
                     self.add_log("【操作】 点击【前往挑战】")
                     self.adb_click(challenge_loc[0], challenge_loc[1])
-                    self.safe_sleep(2.5)
+                    # ★ 动态等待：最多等 4 秒，只要挑战按钮消失了就立刻走
+                    for _ in range(8):
+                        self.safe_sleep(0.5)
+                        chk = self.adb_screenshot()
+                        if chk is None or not self.find_image_safe(chk, 'btn_challenge.png', min_conf=0.85, min_bright=25)[0]:
+                            break
                     continue
                 else:
                     self.is_auto_challenging = False
                     continue
+
+            # 4. ★ 侧边残纹（用高门控拦截主界面的假图标，如果不满足前面的主界面操作，才去点它）
+            side_loc, _ = self.find_image_safe(screen, 'icon_side.png', min_conf=0.75, min_bright=40)
+            if side_loc:
+                self.update_status("点击侧边道碑残纹", "#e67e22")
+                self.add_log("【操作】 点击侧边道碑残纹图标")
+                self.adb_click(side_loc[0], side_loc[1])
+                self.safe_sleep(1.0)
+                self.handle_buff_loop(curr_w, curr_h)
+                continue
 
             if self.is_auto_challenging:
                 self.update_status("自动挑战中...", "gray")
@@ -1475,7 +1580,6 @@ class GameAutomationApp:
             self.force_auto_next = False
             self.check_siming_now = False
             
-            # ★ 新增：重置时间与警报
             self.last_action_time = time.time()
             self.alert_triggered = False
 
@@ -1488,17 +1592,20 @@ class GameAutomationApp:
             self.thread = threading.Thread(target=self.automation_loop, daemon=True)
             self.thread.start()
             
-            # ★ 新增：启动看门狗监控线程
             threading.Thread(target=self.watchdog_thread, daemon=True).start()
 
-    def toggle_pause(self):
+    def toggle_pause(self, auto=False):
         if self.is_running:
             if not self.is_paused:
                 self.is_paused = True
                 self.pause_btn.configure(text="继续", fg_color="#3498db",
                                          hover_color="#2980b9", text_color="white")
                 self.update_status("已暂停", "#f1c40f")
-                self.add_log("【系统】 用户点击了暂停")
+                
+                if auto:
+                    self.add_log("【系统】 已自动暂停脚本", "#e74c3c")
+                else:
+                    self.add_log("【系统】 用户点击了暂停")
             else:
                 self.is_paused = False
                 self.pause_btn.configure(text="暂停", fg_color="#f1c40f",
@@ -1506,7 +1613,6 @@ class GameAutomationApp:
                 self.update_status("恢复运行中...", "#2ecc71")
                 self.add_log("【系统】 用户点击了继续")
                 
-                # ★ 新增：恢复时刷新最后动作时间，防止一恢复马上报警
                 self.last_action_time = time.time()
                 self.alert_triggered = False
 
