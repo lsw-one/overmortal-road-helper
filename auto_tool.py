@@ -1425,7 +1425,6 @@ class GameAutomationApp:
                 self.wait_and_close_popup('icon_no_reward.png', 2.0, close_x, close_y, action_name="无奖励")
                 self.force_challenge_next = True
                 self.is_auto_challenging = False
-                self.fast_track_main_ui()
                 continue
 
             if self.find_and_click(screen, 'btn_claim.png'):
@@ -1437,7 +1436,6 @@ class GameAutomationApp:
                 self.wait_and_close_popup('text_congrats.png', 2.0, close_x, close_y, action_name="战斗奖励")
                 self.force_challenge_next = True
                 self.is_auto_challenging = False
-                self.fast_track_main_ui()
                 continue
 
             if self.find_image_match(screen, 'btn_fail.png')[0]:
