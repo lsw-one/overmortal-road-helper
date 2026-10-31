@@ -1317,11 +1317,9 @@ class GameAutomationApp:
                             self.wait_and_close_popup('daobao/popup_lingye.png', 2.0, close_x, close_y, action_name="造化灵液")
                             self.safe_sleep(0.5)
                     continue
-
-            if gray_val > 0.6:
-                self.add_log("【系统】 滋养按钮变灰（缺资源），无法升阶，直接退出")
-                has_gray_nourish = True
-                break
+            else:
+                # ★ 发现变灰不要退出，提示一下，去切换属性
+                self.add_log("【系统】 当前属性滋养不可用，尝试切换其他属性...", "#e67e22")
 
             clicked_opt_this_round = False
             for opt in opts:
@@ -1333,7 +1331,7 @@ class GameAutomationApp:
                 loc, max_val, _ = self.find_image_match(screen, opt, use_gray=True)
                 if max_val >= 0.55 and loc:
                     center_x, center_y = loc
-                    self.add_log(f"【操作】 切换属性: {os.path.basename(opt)}")
+                    self.add_log(f"【操作】 点击属性: {os.path.basename(opt)}")
                     self.adb_click(center_x, center_y)
                     self.safe_sleep(0.8)
 
@@ -1343,25 +1341,28 @@ class GameAutomationApp:
                         _, gr_val_after, _ = self.find_image_match(screen_after, 'daobao/btn_nourish_gray.png')
 
                         if g_val_after > gr_val_after and g_val_after > 0.6:
-                            pass
+                            pass # 切换后是绿箭头，说明可用
                         elif gr_val_after > 0.6:
-                            self.add_log(f"【系统】 {os.path.basename(opt)} 资源不足（变灰），准备退出")
-                            has_gray_nourish = True
+                            self.add_log(f"【系统】 {os.path.basename(opt)} 资源不足（变灰），拉黑", "#e67e22")
+                            exhausted_opts.append(opt) # 资源不够，拉黑
                         else:
-                            self.add_log(f"【系统】 {os.path.basename(opt)} 满阶（滋养消失）")
-                            exhausted_opts.append(opt)
+                            self.add_log(f"【系统】 {os.path.basename(opt)} 满阶（滋养消失），拉黑", "#e67e22")
+                            exhausted_opts.append(opt) # 满阶了，拉黑
                     clicked_opt_this_round = True
                     break
 
-            if has_gray_nourish:
-                break
             if clicked_opt_this_round:
                 continue
 
-            if len(exhausted_opts) == 3:
-                self.add_log("【操作】 三个属性均已满阶，尝试点开内部大图升阶")
+            # 如果 3 个属性全被拉黑了
+            if len(exhausted_opts) >= 3:
+                self.add_log("【操作】 三个属性均不可升级，尝试点开内部大图")
                 self.adb_click(inside_loc[0], inside_loc[1])
                 self.safe_sleep(1.5)
+                break 
+                
+            self.add_log("【系统】 未找到可点击的属性文字，直接退出", "#e74c3c")
+            break
 
         if not self.is_running:
             return
