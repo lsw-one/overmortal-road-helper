@@ -274,7 +274,7 @@ class SettingsWindow(ctk.CTkToplevel):
 
         self.title("域外古路助手 - 设置")
 
-        w, h = 560, 740
+        w, h = 560, 800
         self.geometry(f"{w}x{h}+-9999+-9999")
 
         if os.path.exists(ICON_PATH):
@@ -299,6 +299,27 @@ class SettingsWindow(ctk.CTkToplevel):
 
         ctk.CTkLabel(dev_frame, text="(具体查看在模拟器里)", text_color="gray",
                      font=(FONT_FAMILY, 12)).grid(row=0, column=2, padx=(0, 10))
+
+        # --- 道宝升级优先级（互斥单选） ---
+        db_frame = ctk.CTkFrame(self, fg_color=THEME_FRAME)
+        db_frame.pack(fill="x", padx=20, pady=(0, 10))
+
+        ctk.CTkLabel(db_frame, text="道宝优先级:", font=(FONT_FAMILY, 14),
+                     text_color=THEME_TEXT).pack(side="left", padx=(10, 15), pady=10)
+
+        self.zaohua_var = tk.BooleanVar(value=(main_app.daobao_priority == 'zaohua'))
+        ctk.CTkSwitch(db_frame, text="造化道果", variable=self.zaohua_var,
+                      command=self._on_zaohua_toggle,
+                      font=(FONT_FAMILY, 13), text_color=THEME_TEXT,
+                      progress_color="#3a7ebf"
+                      ).pack(side="left", padx=(0, 25))
+
+        self.pangu_var = tk.BooleanVar(value=(main_app.daobao_priority == 'pangu'))
+        ctk.CTkSwitch(db_frame, text="盘古神木", variable=self.pangu_var,
+                      command=self._on_pangu_toggle,
+                      font=(FONT_FAMILY, 13), text_color=THEME_TEXT,
+                      progress_color="#3a7ebf"
+                      ).pack(side="left")
 
         # --- 优先级标题 ---
         ctk.CTkLabel(self, text="【司命道碑】优先级设置",
@@ -389,6 +410,18 @@ class SettingsWindow(ctk.CTkToplevel):
         self.focus_force()
         self.after(50, self.grab_set)
         self.after(80, lambda: apply_titlebar(self, ctk.get_appearance_mode() == "Dark"))
+
+    def _on_zaohua_toggle(self):
+        if self.zaohua_var.get():
+            self.pangu_var.set(False)
+        else:
+            self.zaohua_var.set(True)   # 不允许两个都关
+
+    def _on_pangu_toggle(self):
+        if self.pangu_var.get():
+            self.zaohua_var.set(False)
+        else:
+            self.pangu_var.set(True)    # 不允许两个都关
 
     def render_priority_list(self):
         for widget in self.list_frame.winfo_children():
@@ -584,9 +617,11 @@ class SettingsWindow(ctk.CTkToplevel):
 
     def save_and_close(self):
         self.main_app.adb_port = self.port_entry.get().strip()
+        self.main_app.daobao_priority = 'zaohua' if self.zaohua_var.get() else 'pangu'
         config_data = {
             "adb_port": self.main_app.adb_port,
-            "priority_list": self.main_app.current_priority
+            "priority_list": self.main_app.current_priority,
+            "daobao_priority": self.main_app.daobao_priority
         }
         try:
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
@@ -600,7 +635,7 @@ class SettingsWindow(ctk.CTkToplevel):
 class GameAutomationApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("一念逍遥·域外古路助手 v2.1")
+        self.root.title("一念逍遥·域外古路助手 v2.2")
 
         w, h = 570, 680
         self.root.update_idletasks()
@@ -635,6 +670,7 @@ class GameAutomationApp:
 
         self.adb_port = "16448"
         self.current_priority = [4, 2, 6, 1, 5, 8, 7, 9, 3]
+        self.daobao_priority = 'zaohua'
         self.img_cache = {}
 
         self.theme_switcher = ThemeSwitcher(self)
@@ -744,6 +780,7 @@ class GameAutomationApp:
                     priority = data.get("priority_list", [4, 2, 6, 1, 5, 8, 7, 9, 3])
                     if isinstance(priority, list) and len(priority) == 9:
                         self.current_priority = priority
+                    self.daobao_priority = data.get("daobao_priority", "zaohua")
                 self.add_log(f"【系统】 已成功加载配置文件: {CONFIG_PATH}")
             except Exception:
                 self.add_log(f"【系统】 读取配置失败，将使用默认值")
@@ -1229,17 +1266,30 @@ class GameAutomationApp:
             if screen is None:
                 continue
 
-            zaohua_loc, _, _ = self.find_image_match(screen, 'daobao/choose_zaohua.png')
-            if zaohua_loc:
-                in_choose_screen = True
-                is_zaohua = True
-                break
-                
-            pangu_loc, _, _ = self.find_image_match(screen, 'daobao/choose_pangu.png')
-            if pangu_loc:
-                in_choose_screen = True
-                is_zaohua = False
-                break
+            if self.daobao_priority == 'zaohua':
+                zaohua_loc, _, _ = self.find_image_match(screen, 'daobao/choose_zaohua.png')
+                if zaohua_loc:
+                    in_choose_screen = True
+                    is_zaohua = True
+                    break
+
+                pangu_loc, _, _ = self.find_image_match(screen, 'daobao/choose_pangu.png')
+                if pangu_loc:
+                    in_choose_screen = True
+                    is_zaohua = False
+                    break
+            else:
+                pangu_loc, _, _ = self.find_image_match(screen, 'daobao/choose_pangu.png')
+                if pangu_loc:
+                    in_choose_screen = True
+                    is_zaohua = False
+                    break
+
+                zaohua_loc, _, _ = self.find_image_match(screen, 'daobao/choose_zaohua.png')
+                if zaohua_loc:
+                    in_choose_screen = True
+                    is_zaohua = True
+                    break
                 
             cur_entry, _ = self.find_image_safe(screen, 'daobao/entry.png', min_conf=0.8, min_bright=40)
             if cur_entry:
