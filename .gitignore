@@ -223,3 +223,11 @@ __marimo__/
 OuterRoadHelper_v*/
 !OuterRoadHelper.spec
 开发说明.md
+
+# ---------- Daily tool ----------
+video/
+_frames/
+Daily/.venv/
+Daily/.tmp/
+Daily/.pipcache/
+
