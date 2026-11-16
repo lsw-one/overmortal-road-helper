@@ -274,7 +274,7 @@ class SettingsWindow(ctk.CTkToplevel):
 
         self.title("域外古路助手 - 设置")
 
-        w, h = 560, 800
+        w, h = 560, 810
         self.geometry(f"{w}x{h}+-9999+-9999")
 
         if os.path.exists(ICON_PATH):
@@ -300,26 +300,30 @@ class SettingsWindow(ctk.CTkToplevel):
         ctk.CTkLabel(dev_frame, text="(具体查看在模拟器里)", text_color="gray",
                      font=(FONT_FAMILY, 12)).grid(row=0, column=2, padx=(0, 10))
 
-        # --- 道宝升级优先级（互斥单选） ---
-        db_frame = ctk.CTkFrame(self, fg_color=THEME_FRAME)
+        # --- 道宝升级优先级（互斥单选：分段控制器） ---
+        db_frame = ctk.CTkFrame(self, fg_color=THEME_FRAME, corner_radius=10)
         db_frame.pack(fill="x", padx=20, pady=(0, 10))
 
-        ctk.CTkLabel(db_frame, text="道宝优先级:", font=(FONT_FAMILY, 14),
-                     text_color=THEME_TEXT).pack(side="left", padx=(10, 15), pady=10)
+        ctk.CTkLabel(db_frame, text="道宝升级优先级", font=(FONT_FAMILY, 14, "bold"),
+                     text_color=THEME_TEXT).pack(anchor="w", padx=15, pady=(10, 6))
 
-        self.zaohua_var = tk.BooleanVar(value=(main_app.daobao_priority == 'zaohua'))
-        ctk.CTkSwitch(db_frame, text="造化道果", variable=self.zaohua_var,
-                      command=self._on_zaohua_toggle,
-                      font=(FONT_FAMILY, 13), text_color=THEME_TEXT,
-                      progress_color="#3a7ebf"
-                      ).pack(side="left", padx=(0, 25))
-
-        self.pangu_var = tk.BooleanVar(value=(main_app.daobao_priority == 'pangu'))
-        ctk.CTkSwitch(db_frame, text="盘古神木", variable=self.pangu_var,
-                      command=self._on_pangu_toggle,
-                      font=(FONT_FAMILY, 13), text_color=THEME_TEXT,
-                      progress_color="#3a7ebf"
-                      ).pack(side="left")
+        self.daobao_seg = ctk.CTkSegmentedButton(
+            db_frame,
+            values=["造化道果", "盘古神木"],
+            command=self._on_daobao_seg_change,
+            font=(FONT_FAMILY, 14, "bold"),
+            height=36,
+            corner_radius=8,
+            border_width=2,
+            fg_color=THEME_ENTRY,
+            selected_color="#3a7ebf",
+            selected_hover_color="#2f6aa3",
+            unselected_color=THEME_ENTRY,
+            unselected_hover_color=("#e4e4e4", "#3a3a3a"),
+            text_color=("#1a1a1a", "#ffffff"),
+        )
+        self.daobao_seg.pack(fill="x", padx=15, pady=(0, 12))
+        self.daobao_seg.set("造化道果" if main_app.daobao_priority == 'zaohua' else "盘古神木")
 
         # --- 优先级标题 ---
         ctk.CTkLabel(self, text="【司命道碑】优先级设置",
@@ -411,17 +415,8 @@ class SettingsWindow(ctk.CTkToplevel):
         self.after(50, self.grab_set)
         self.after(80, lambda: apply_titlebar(self, ctk.get_appearance_mode() == "Dark"))
 
-    def _on_zaohua_toggle(self):
-        if self.zaohua_var.get():
-            self.pangu_var.set(False)
-        else:
-            self.zaohua_var.set(True)   # 不允许两个都关
-
-    def _on_pangu_toggle(self):
-        if self.pangu_var.get():
-            self.zaohua_var.set(False)
-        else:
-            self.pangu_var.set(True)    # 不允许两个都关
+    def _on_daobao_seg_change(self, value):
+        self.main_app.daobao_priority = 'zaohua' if value == "造化道果" else 'pangu'
 
     def render_priority_list(self):
         for widget in self.list_frame.winfo_children():
@@ -617,7 +612,7 @@ class SettingsWindow(ctk.CTkToplevel):
 
     def save_and_close(self):
         self.main_app.adb_port = self.port_entry.get().strip()
-        self.main_app.daobao_priority = 'zaohua' if self.zaohua_var.get() else 'pangu'
+        self.main_app.daobao_priority = 'zaohua' if self.daobao_seg.get() == "造化道果" else 'pangu'
         config_data = {
             "adb_port": self.main_app.adb_port,
             "priority_list": self.main_app.current_priority,
