@@ -630,7 +630,7 @@ class SettingsWindow(ctk.CTkToplevel):
 class GameAutomationApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("一念逍遥·域外古路助手 v2.2")
+        self.root.title("一念逍遥·域外古路助手 v2.3")
 
         w, h = 570, 680
         self.root.update_idletasks()
@@ -666,6 +666,8 @@ class GameAutomationApp:
         self.adb_port = "16448"
         self.current_priority = [4, 2, 6, 1, 5, 8, 7, 9, 3]
         self.daobao_priority = 'zaohua'
+        # ★ 新增：本轮是否已尝试进入过道宝（成功进入才置位，领奖后清零）
+        self.daobao_tried_this_round = False
         self.img_cache = {}
 
         self.theme_switcher = ThemeSwitcher(self)
@@ -1240,12 +1242,14 @@ class GameAutomationApp:
             self.safe_sleep(2)
 
     def handle_daobao(self, screen, curr_w, curr_h):
+        """返回 True 表示确实进入了道宝选择界面（可置位 daobao_tried_this_round），
+           返回 False 表示没进去（等待超时/被中断）。"""
         self.update_status("处理道宝升级", "#f1c40f")
         self.add_log("【操作】 发现道宝可升级，进入界面")
 
         entry_loc, _ = self.find_image_safe(screen, 'daobao/entry.png', min_conf=0.8, min_bright=40)
         if not entry_loc:
-            return
+            return False    # ★ 修改：明确返回 False
         
         self.adb_click(entry_loc[0], entry_loc[1])
         
@@ -1256,7 +1260,7 @@ class GameAutomationApp:
         for _ in range(10):
             self.safe_sleep(0.5)
             if not self.is_running:
-                return
+                return False    # ★ 修改
             screen = self.adb_screenshot()
             if screen is None:
                 continue
@@ -1293,7 +1297,7 @@ class GameAutomationApp:
 
         if not in_choose_screen:
             self.add_log("【系统】 等待道宝选择界面超时，放弃进入，返回主循环")
-            return
+            return False    # ★ 修改：没进道宝选择界面，不算进入
 
         if is_zaohua:
             self.adb_click(zaohua_loc[0], zaohua_loc[1])
@@ -1305,10 +1309,10 @@ class GameAutomationApp:
         self.safe_sleep(2)
 
         if not self.is_running:
-            return
+            return True     # ★ 修改：已经进入了，返回 True
         screen = self.adb_screenshot()
         if screen is None:
-            return
+            return True     # ★ 修改：已经进入了，返回 True
 
         prefix = "daobao/zaohua" if is_zaohua else "daobao/pangu"
         opts = [f"{prefix}_opt1.png", f"{prefix}_opt2.png", f"{prefix}_opt3.png"]
@@ -1320,7 +1324,7 @@ class GameAutomationApp:
         while self.is_running and loop_count < 30:
             loop_count += 1
             if not self._wait_if_paused():
-                return
+                return True     # ★ 修改：已经进入了，返回 True
 
             screen = self.adb_screenshot()
             if screen is None:
@@ -1337,7 +1341,6 @@ class GameAutomationApp:
                 
                 close_x = int(820 * (curr_w / BASE_WIDTH))
                 close_y = int(2100 * (curr_h / BASE_HEIGHT))
-                # ★ 改为等待 升阶成功 文字并关闭，时间根据你说的设为 4.5 秒
                 self.wait_and_close_popup('text_upgrade_success.png', 4.5, close_x, close_y, action_name="升阶成功")
                 
                 exhausted_opts.clear()
@@ -1363,13 +1366,12 @@ class GameAutomationApp:
                             self.safe_sleep(0.5)
                     continue
             else:
-                # ★ 发现变灰不要退出，提示一下，去切换属性
                 self.add_log("【系统】 当前属性滋养不可用，尝试切换其他属性...", "#e67e22")
 
             clicked_opt_this_round = False
             for opt in opts:
                 if not self.is_running:
-                    return
+                    return True     # ★ 修改：已经进入了，返回 True
                 if opt in exhausted_opts:
                     continue
 
@@ -1386,13 +1388,13 @@ class GameAutomationApp:
                         _, gr_val_after, _ = self.find_image_match(screen_after, 'daobao/btn_nourish_gray.png')
 
                         if g_val_after > gr_val_after and g_val_after > 0.6:
-                            pass # 切换后是绿箭头，说明可用
+                            pass
                         elif gr_val_after > 0.6:
                             self.add_log(f"【系统】 {os.path.basename(opt)} 资源不足（变灰），拉黑", "#e67e22")
-                            exhausted_opts.append(opt) # 资源不够，拉黑
+                            exhausted_opts.append(opt)
                         else:
                             self.add_log(f"【系统】 {os.path.basename(opt)} 满阶（滋养消失），拉黑", "#e67e22")
-                            exhausted_opts.append(opt) # 满阶了，拉黑
+                            exhausted_opts.append(opt)
                     clicked_opt_this_round = True
                     break
 
@@ -1410,7 +1412,7 @@ class GameAutomationApp:
             break
 
         if not self.is_running:
-            return
+            return True     # ★ 修改：已经进入了，返回 True
         self.add_log("【操作】 退出道宝界面")
 
         screen_back = self.adb_screenshot()
@@ -1428,20 +1430,31 @@ class GameAutomationApp:
                 else:
                     self.add_log("【系统】 已回到主界面")
 
+        return True     # ★ 修改：整段流程走完，返回 True
+
     # ------------------ 主循环 ------------------
     def automation_loop(self):
         current_port = f"127.0.0.1:{self.adb_port}"
         self.add_log(f"【系统】 正在尝试连接ADB: {current_port} ...")
 
         try:
-            res = subprocess.run(f'"{ADB_PATH}" connect {current_port}', shell=True,
-                                 capture_output=True, text=True, cwd=ADB_CWD, timeout=5)
-            if "connected" in res.stdout.lower() or "already" in res.stdout.lower():
-                self.add_log(f"✅ ADB 连接成功！")
+            res = subprocess.run(
+                [ADB_PATH, 'connect', current_port],
+                capture_output=True, text=True,
+                cwd=ADB_CWD, timeout=10,
+                encoding='utf-8', errors='ignore'
+            )
+            out = (res.stdout or "") + (res.stderr or "")
+            out_low = out.lower()
+            if "connected to" in out_low or "already connected" in out_low:
+                self.add_log("✅ ADB 连接成功！")
+            elif any(k in out_low for k in ("cannot connect", "failed to connect",
+                                            "unable to connect", "connection refused", "10061")):
+                self.add_log(f"❌ ADB 连接失败，请检查端口或模拟器是否启动:\n{out.strip()}", "#e74c3c")
             else:
-                self.add_log(f"⚠️ ADB 返回信息: {res.stdout.strip()}")
+                self.add_log(f"⚠️ ADB 返回信息: {out.strip() or '(无输出)'}")
         except subprocess.TimeoutExpired:
-            self.add_log(f"❌ ADB 连接超时，请检查模拟器是否卡死！", "#e74c3c")
+            self.add_log("❌ ADB 连接超时，请检查模拟器是否卡死！", "#e74c3c")
         except Exception as e:
             self.add_log(f"❌ ADB 连接异常: {e}", "#e74c3c")
 
@@ -1471,6 +1484,7 @@ class GameAutomationApp:
                 self.wait_and_close_popup('icon_no_reward.png', 2.0, close_x, close_y, action_name="无奖励")
                 self.force_challenge_next = True
                 self.is_auto_challenging = False
+                # ★ 无奖励：资源未到账，不清零道宝标志
                 continue
 
             if self.find_and_click(screen, 'btn_claim.png'):
@@ -1478,10 +1492,11 @@ class GameAutomationApp:
                 self.add_log("【操作】 点击 [领取奖励] 按钮")
                 close_x = int(805 * (curr_w / BASE_WIDTH))
                 close_y = int(1870 * (curr_h / BASE_HEIGHT))
-                # ★ 改为等待 恭喜获得 文字并关闭
                 self.wait_and_close_popup('text_congrats.png', 2.0, close_x, close_y, action_name="战斗奖励")
                 self.force_challenge_next = True
                 self.is_auto_challenging = False
+                # ★ 资源已到账，清零道宝标志，下一轮可重新尝试升级
+                self.daobao_tried_this_round = False
                 continue
 
             if self.find_image_match(screen, 'btn_fail.png')[0]:
@@ -1512,6 +1527,7 @@ class GameAutomationApp:
                     self.force_challenge_next = True
                     self.is_auto_challenging = False
                     self.fast_track_main_ui()
+                # ★ 失败：资源未到账，不清零道宝标志
                 continue
 
             if self.find_and_click(screen, 'btn_win.png'):
@@ -1522,6 +1538,7 @@ class GameAutomationApp:
                 self.fail_count = 0
                 self.is_auto_challenging = False
                 self.check_siming_now = True
+                # ★ 胜利：资源还没到账（要等领奖），不清零道宝标志
 
                 self.safe_sleep(0.8)
                 self.handle_buff_loop(curr_w, curr_h)
@@ -1533,10 +1550,13 @@ class GameAutomationApp:
                 self.handle_siming(screen, curr_w, curr_h, siming_click_loc)
                 continue
 
-            # 2. ★ 道宝检测
+            # 2. ★ 道宝检测（本轮未尝试过才进，防止资源不足反复进）
             entry_loc, _ = self.find_image_safe(screen, 'daobao/entry.png', min_conf=0.8, min_bright=40)
-            if entry_loc:
-                self.handle_daobao(screen, curr_w, curr_h)
+            if entry_loc and not self.daobao_tried_this_round:
+                entered = self.handle_daobao(screen, curr_w, curr_h)
+                if entered:
+                    self.daobao_tried_this_round = True
+                    self.add_log("【系统】 本轮已尝试道宝升级，等待下一次领奖后再重试", "#e67e22")
                 continue
 
             # 3. ★ 自动挑战 / 前往挑战（主界面优先推进）
@@ -1572,7 +1592,6 @@ class GameAutomationApp:
                     self.add_log("【操作】 点击【前往挑战】")
                     self.adb_click(challenge_loc[0], challenge_loc[1])
                     self.update_status("正在等待战斗加载...", "#2ecc71")
-                    # ★ 动态等待：最多等 4 秒，只要挑战按钮消失了就立刻走
                     for _ in range(8):
                         self.safe_sleep(0.5)
                         chk = self.adb_screenshot()
@@ -1584,7 +1603,6 @@ class GameAutomationApp:
                     self.update_status("准备点击【前往挑战】", "#2ecc71")
                     self.add_log("【操作】 点击【前往挑战】")
                     self.adb_click(challenge_loc[0], challenge_loc[1])
-                    # ★ 动态等待：最多等 4 秒，只要挑战按钮消失了就立刻走
                     for _ in range(8):
                         self.safe_sleep(0.5)
                         chk = self.adb_screenshot()
@@ -1623,6 +1641,8 @@ class GameAutomationApp:
             self.force_challenge_next = False
             self.force_auto_next = False
             self.check_siming_now = False
+            # ★ 新增：启动时重置道宝本轮标志
+            self.daobao_tried_this_round = False
             
             self.last_action_time = time.time()
             self.alert_triggered = False
