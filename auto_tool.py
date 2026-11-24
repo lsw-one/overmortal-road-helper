@@ -1812,15 +1812,28 @@ class GameAutomationApp:
         if self.is_running:
             self.is_running = False
             self.is_paused = False
-            # 等待后台线程真正退出，避免停止后立即重启产生重复线程
-            if self.thread is not None and self.thread.is_alive():
-                self.thread.join(timeout=3)
-            self.start_btn.configure(state="normal")
+            # 立即反馈：先禁用全部按钮并提示，等待后台线程自行退出
+            self.start_btn.configure(state="disabled")
             self.pause_btn.configure(state="disabled", text="暂停",
                                      fg_color="#f1c40f", text_color="black")
             self.stop_btn.configure(state="disabled")
-            self.update_status("已停止", "#e74c3c")
-            self.add_log("【系统】 用户手动停止运行。")
+            self.update_status("正在停止...", "#e67e22")
+            self.add_log("【系统】 正在停止运行，等待后台线程退出...")
+            self._await_stop(time.time())
+
+    def _await_stop(self, start_time):
+        if self._closing:
+            return
+        alive = self.thread is not None and self.thread.is_alive()
+        if alive and time.time() - start_time < 10:
+            self.root.after(100, self._await_stop, start_time)
+            return
+        self.start_btn.configure(state="normal")
+        self.update_status("已停止", "#e74c3c")
+        if alive:
+            self.add_log("【系统】 后台线程未在预期时间内退出，已恢复按钮（再次启动会自动等待）", "#e67e22")
+        else:
+            self.add_log("【系统】 后台线程已停止。")
 
     def on_closing(self):
         if self._closing:
