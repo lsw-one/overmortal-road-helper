@@ -105,6 +105,24 @@ def _lerp_color(c1, c2, t):
                        g1 + (g2 - g1) * t,
                        b1 + (b2 - b1) * t)
 
+def _is_windows_dark():
+    """读取 Windows 应用主题设置，深色返回 True。"""
+    if os.name != 'nt':
+        return False
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+        )
+        try:
+            val, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+            return int(val) == 0
+        finally:
+            winreg.CloseKey(key)
+    except Exception:
+        return False
+
 # ================= 深色标题栏工具 =================
 def apply_titlebar(window, dark=True):
     if os.name != 'nt':
@@ -134,12 +152,35 @@ class ThemeSwitcher:
         self.root = app.root
         self.active = False
 
-    def switch(self, to_dark, fade_in_ms=120, color_ms=260, fade_out_ms=140):
+    def switch(self, to_mode, fade_in_ms=120, color_ms=260, fade_out_ms=140):
         if self.active:
             return
+
+        if to_mode == "system":
+            target_dark = _is_windows_dark()
+        else:
+            target_dark = (to_mode == "dark")
+        current_dark = ctk.get_appearance_mode() == "Dark"
+
+        if target_dark == current_dark:
+            # 主题未变化，直接应用，不做遮罩动画
+            try:
+                ctk.set_appearance_mode(to_mode)
+            except Exception:
+                pass
+            is_dark = ctk.get_appearance_mode() == "Dark"
+            apply_titlebar(self.root, is_dark)
+            for child in self.root.winfo_children():
+                if isinstance(child, SettingsWindow):
+                    try:
+                        apply_titlebar(child, is_dark)
+                    except Exception:
+                        pass
+            return
+
         self.active = True
 
-        if to_dark:
+        if target_dark:
             from_bg, to_bg = THEME_BG[0], THEME_BG[1]
         else:
             from_bg, to_bg = THEME_BG[1], THEME_BG[0]
@@ -176,9 +217,9 @@ class ThemeSwitcher:
 
         if has_alpha:
             self._fade_in(overlay, 0, max(1, fade_in_ms // 15),
-                          to_dark, from_bg, to_bg, color_ms, fade_out_ms)
+                          to_mode, from_bg, to_bg, color_ms, fade_out_ms)
         else:
-            self._do_switch(overlay, False, to_dark, from_bg, to_bg,
+            self._do_switch(overlay, False, to_mode, from_bg, to_bg,
                             color_ms, fade_out_ms)
 
     @staticmethod
@@ -187,14 +228,14 @@ class ThemeSwitcher:
         ys = f"{y:+d}" if y != 0 else "+0"
         return f"{w}x{h}{xs}{ys}"
 
-    def _fade_in(self, overlay, i, total, to_dark, from_bg, to_bg,
+    def _fade_in(self, overlay, i, total, to_mode, from_bg, to_bg,
                  color_ms, fade_out_ms):
         if i > total:
             try:
                 overlay.attributes("-alpha", 1.0)
             except Exception:
                 pass
-            self._do_switch(overlay, True, to_dark, from_bg, to_bg,
+            self._do_switch(overlay, True, to_mode, from_bg, to_bg,
                             color_ms, fade_out_ms)
             return
         try:
@@ -202,11 +243,11 @@ class ThemeSwitcher:
         except Exception:
             pass
         self.root.after(15, self._fade_in, overlay, i + 1, total,
-                        to_dark, from_bg, to_bg, color_ms, fade_out_ms)
+                        to_mode, from_bg, to_bg, color_ms, fade_out_ms)
 
-    def _do_switch(self, overlay, has_alpha, to_dark, from_bg, to_bg,
+    def _do_switch(self, overlay, has_alpha, to_mode, from_bg, to_bg,
                    color_ms, fade_out_ms):
-        ctk.set_appearance_mode("dark" if to_dark else "light")
+        ctk.set_appearance_mode(to_mode)
         try:
             self.root.update_idletasks()
             self.root.update()
@@ -616,7 +657,8 @@ class SettingsWindow(ctk.CTkToplevel):
         config_data = {
             "adb_port": self.main_app.adb_port,
             "priority_list": self.main_app.current_priority,
-            "daobao_priority": self.main_app.daobao_priority
+            "daobao_priority": self.main_app.daobao_priority,
+            "appearance_mode": self.main_app.appearance_mode
         }
         try:
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
@@ -630,7 +672,7 @@ class SettingsWindow(ctk.CTkToplevel):
 class GameAutomationApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("一念逍遥·域外古路助手 v2.3")
+        self.root.title("一念逍遥·域外古路助手 v2.4")
 
         w, h = 570, 680
         self.root.update_idletasks()
@@ -649,6 +691,8 @@ class GameAutomationApp:
         self.is_running = False
         self.is_paused = False
         self.thread = None
+        self.watchdog_thread_obj = None
+        self._closing = False
 
         self.is_auto_challenging = False
         self.force_challenge_next = False
@@ -669,6 +713,9 @@ class GameAutomationApp:
         # ★ 新增：本轮是否已尝试进入过道宝（成功进入才置位，领奖后清零）
         self.daobao_tried_this_round = False
         self.img_cache = {}
+
+        self.appearance_mode = "system"
+        self._last_system_dark = _is_windows_dark()
 
         self.theme_switcher = ThemeSwitcher(self)
 
@@ -735,12 +782,69 @@ class GameAutomationApp:
         self.root.after(500, self.check_files)
         self.root.after(150, lambda: apply_titlebar(self.root, ctk.get_appearance_mode() == "Dark"))
 
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.root.after(500, self._watch_system_theme)
+
+    # ---------- 主题：跟随系统 / 深色 / 浅色 ----------
+    def _update_theme_btn_text(self):
+        labels = {"system": "🌗 跟随系统", "dark": "🌙 深色", "light": "☀️ 浅色"}
+        try:
+            self.theme_btn.configure(text=labels.get(self.appearance_mode, "🌗 切换主题"))
+        except Exception:
+            pass
+
+    def _save_appearance_mode(self):
+        try:
+            data = {}
+            if os.path.exists(CONFIG_PATH):
+                try:
+                    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                        data = json.load(f) or {}
+                except Exception:
+                    data = {}
+            data["appearance_mode"] = self.appearance_mode
+            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
+        except Exception:
+            pass
+
     def toggle_theme(self):
         if self.theme_switcher.active:
             return
-        to_dark = ctk.get_appearance_mode() != "Dark"
-        self.add_log("【系统】 切换到深色模式..." if to_dark else "【系统】 切换到浅色模式...")
-        self.theme_switcher.switch(to_dark)
+        # 首次（跟随系统）点击时，直接切到与系统当前外观相反的模式；之后在深/浅间二态切换
+        if self.appearance_mode == "system":
+            self.appearance_mode = "light" if _is_windows_dark() else "dark"
+        elif self.appearance_mode == "dark":
+            self.appearance_mode = "light"
+        else:
+            self.appearance_mode = "dark"
+        self._save_appearance_mode()
+        self._update_theme_btn_text()
+        names = {"dark": "深色模式", "light": "浅色模式"}
+        self.add_log(f"【系统】 切换为：{names[self.appearance_mode]}")
+        self.theme_switcher.switch(self.appearance_mode)
+
+    def _watch_system_theme(self):
+        if self._closing:
+            return
+        if self.appearance_mode == "system":
+            dark = _is_windows_dark()
+            if dark != self._last_system_dark:
+                self._last_system_dark = dark
+                if not self.theme_switcher.active:
+                    try:
+                        ctk.set_appearance_mode("system")
+                    except Exception:
+                        pass
+                    apply_titlebar(self.root, dark)
+                    for child in self.root.winfo_children():
+                        if isinstance(child, SettingsWindow):
+                            try:
+                                apply_titlebar(child, dark)
+                            except Exception:
+                                pass
+                    self.add_log(f"【系统】 已跟随系统切换至{'深色' if dark else '浅色'}模式")
+        self.root.after(500, self._watch_system_theme)
 
     def preload_images(self):
         count = 0
@@ -778,11 +882,21 @@ class GameAutomationApp:
                     if isinstance(priority, list) and len(priority) == 9:
                         self.current_priority = priority
                     self.daobao_priority = data.get("daobao_priority", "zaohua")
+                    mode = data.get("appearance_mode", "system")
+                    if mode in ("system", "dark", "light"):
+                        self.appearance_mode = mode
                 self.add_log(f"【系统】 已成功加载配置文件: {CONFIG_PATH}")
             except Exception:
                 self.add_log(f"【系统】 读取配置失败，将使用默认值")
         else:
             self.add_log(f"【系统】 未找到配置文件，将使用默认端口和排序")
+
+        try:
+            ctk.set_appearance_mode(self.appearance_mode)
+        except Exception:
+            pass
+        self._last_system_dark = _is_windows_dark()
+        self._update_theme_btn_text()
 
     def open_settings(self):
         for child in self.root.winfo_children():
@@ -991,7 +1105,7 @@ class GameAutomationApp:
                             self.add_log("❌ 抢救超过1分钟仍未回到主界面，自动暂停脚本", "#e74c3c")
                             self.flash_taskbar()
                             self.root.after(0, self.toggle_pause, True)
-            time.sleep(5)
+            self.safe_sleep(5)
 
     def find_image_match(self, screen_img, img_name, use_gray=False, custom_confidence=None):
         base_name = os.path.basename(img_name)
@@ -1437,12 +1551,15 @@ class GameAutomationApp:
         current_port = f"127.0.0.1:{self.adb_port}"
         self.add_log(f"【系统】 正在尝试连接ADB: {current_port} ...")
 
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         try:
             res = subprocess.run(
                 [ADB_PATH, 'connect', current_port],
                 capture_output=True, text=True,
                 cwd=ADB_CWD, timeout=10,
-                encoding='utf-8', errors='ignore'
+                encoding='utf-8', errors='ignore',
+                startupinfo=startupinfo
             )
             out = (res.stdout or "") + (res.stderr or "")
             out_low = out.lower()
@@ -1632,6 +1749,16 @@ class GameAutomationApp:
         self.add_log("【系统】 后台线程已安全退出。")
 
     def start_task(self):
+        # 等待上一次运行的后台线程彻底退出，避免重复线程导致重复点击
+        if self.thread is not None and self.thread.is_alive():
+            self.add_log("【系统】 上一个任务仍在退出，等待其结束...")
+            self.thread.join(timeout=3)
+        if self.thread is not None and self.thread.is_alive():
+            self.add_log("【系统】 上一个任务未能及时退出，请稍后再试", "#e67e22")
+            return
+        if self.watchdog_thread_obj is not None and self.watchdog_thread_obj.is_alive():
+            self.watchdog_thread_obj.join(timeout=1)
+
         if not self.is_running:
             self.is_running = True
             self.is_paused = False
@@ -1655,8 +1782,9 @@ class GameAutomationApp:
             self.update_status("启动成功，准备扫描...", "#2ecc71")
             self.thread = threading.Thread(target=self.automation_loop, daemon=True)
             self.thread.start()
-            
-            threading.Thread(target=self.watchdog_thread, daemon=True).start()
+
+            self.watchdog_thread_obj = threading.Thread(target=self.watchdog_thread, daemon=True)
+            self.watchdog_thread_obj.start()
 
     def toggle_pause(self, auto=False):
         if self.is_running:
@@ -1684,6 +1812,9 @@ class GameAutomationApp:
         if self.is_running:
             self.is_running = False
             self.is_paused = False
+            # 等待后台线程真正退出，避免停止后立即重启产生重复线程
+            if self.thread is not None and self.thread.is_alive():
+                self.thread.join(timeout=3)
             self.start_btn.configure(state="normal")
             self.pause_btn.configure(state="disabled", text="暂停",
                                      fg_color="#f1c40f", text_color="black")
@@ -1691,13 +1822,40 @@ class GameAutomationApp:
             self.update_status("已停止", "#e74c3c")
             self.add_log("【系统】 用户手动停止运行。")
 
+    def on_closing(self):
+        if self._closing:
+            return
+        self._closing = True
+        self.is_running = False
+        self.is_paused = False
+        try:
+            self.root.withdraw()
+        except Exception:
+            pass
+        self._wait_and_exit(time.time())
+
+    def _wait_and_exit(self, start_time):
+        alive = False
+        for t in (self.thread, self.watchdog_thread_obj):
+            if t is not None and t.is_alive():
+                alive = True
+                break
+        if alive and time.time() - start_time < 5:
+            self.root.after(50, self._wait_and_exit, start_time)
+            return
+        try:
+            self.root.quit()
+            self.root.destroy()
+        except Exception:
+            pass
+
 if __name__ == "__main__":
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
         pass
 
-    ctk.set_appearance_mode("dark")
+    ctk.set_appearance_mode("system")
     root = ctk.CTk()
     app = GameAutomationApp(root)
     root.mainloop()
