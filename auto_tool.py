@@ -16,7 +16,7 @@ import random # 用于随机偏移防检测
 # ================= 配置区域 =================
 IMAGE_CONFIDENCE = 0.65       
 LOOP_DELAY = 0.05            
-BASE_WIDTH = 1660
+BASE_WIDTH = 1600
 BASE_HEIGHT = 2560
 CONFIG_FILE = "config.json"
 CLICK_OFFSET = 8  
